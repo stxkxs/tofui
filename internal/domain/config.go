@@ -54,9 +54,10 @@ type Config struct {
 	WorkerHealthAddr  string `env:"WORKER_HEALTH_ADDR" envDefault:":8081"`
 
 	// Executor
-	ExecutorType       string `env:"EXECUTOR_TYPE" envDefault:"local"` // "local" or "kubernetes"
-	ExecutorNamespace  string `env:"EXECUTOR_NAMESPACE" envDefault:"tofui"`
-	ExecutorImage      string `env:"EXECUTOR_IMAGE" envDefault:"tofui-executor:tofu-1.11"`
+	ExecutorType        string `env:"EXECUTOR_TYPE" envDefault:"local"` // "local" or "kubernetes"
+	ExecutorNamespace   string `env:"EXECUTOR_NAMESPACE" envDefault:"tofui"`
+	ExecutorImage       string `env:"EXECUTOR_IMAGE" envDefault:"tofui-executor:tofu-1.11"`
+	ExecutorImagePrefix string `env:"EXECUTOR_IMAGE_PREFIX" envDefault:"tofui-executor"`
 }
 
 // Validate checks that the configuration is safe for the target environment.

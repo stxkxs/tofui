@@ -59,7 +59,10 @@ func (h *WorkspaceHandler) List(w http.ResponseWriter, r *http.Request) {
 		perPage = 20
 	}
 
-	workspaces, total, err := h.svc.List(r.Context(), userCtx.OrgID, page, perPage)
+	search := r.URL.Query().Get("search")
+	environment := r.URL.Query().Get("environment")
+
+	workspaces, total, err := h.svc.List(r.Context(), userCtx.OrgID, page, perPage, search, environment)
 	if err != nil {
 		respond.ErrorWithRequest(w, r, http.StatusInternalServerError, "failed to list workspaces")
 		return

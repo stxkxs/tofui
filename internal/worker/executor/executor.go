@@ -37,6 +37,7 @@ type ExecuteResult struct {
 	ResourcesChanged int32
 	ResourcesDeleted int32
 	StateFile        []byte
+	PlanJSON         []byte
 }
 
 // Executor runs OpenTofu commands in an isolated environment.

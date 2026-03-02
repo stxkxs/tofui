@@ -51,6 +51,13 @@ type Workspace struct {
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 
+type WorkspaceSummary struct {
+	Workspace
+	LastRunStatus *string    `json:"last_run_status"`
+	LastRunAt     *time.Time `json:"last_run_at"`
+	ResourceCount int32     `json:"resource_count"`
+}
+
 type Run struct {
 	ID               string     `json:"id"`
 	WorkspaceID      string     `json:"workspace_id"`
@@ -65,6 +72,7 @@ type Run struct {
 	ResourcesDeleted int32      `json:"resources_deleted"`
 	ErrorMessage     string     `json:"error_message"`
 	CommitSHA        string     `json:"commit_sha"`
+	PlanJSONURL      string     `json:"plan_json_url"`
 	CreatedBy        string     `json:"created_by"`
 	StartedAt        *time.Time `json:"started_at"`
 	FinishedAt       *time.Time `json:"finished_at"`
@@ -106,6 +114,7 @@ type WorkspaceVariable struct {
 	Value       string    `json:"value"`
 	Sensitive   bool      `json:"sensitive"`
 	Category    string    `json:"category"`
+	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }

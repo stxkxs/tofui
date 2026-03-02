@@ -32,6 +32,9 @@ export interface Workspace {
   created_by: string;
   created_at: string;
   updated_at: string;
+  last_run_status?: string | null;
+  last_run_at?: string | null;
+  resource_count?: number;
 }
 
 export type RunStatus =
@@ -62,11 +65,31 @@ export interface Run {
   resources_deleted?: number;
   error_message?: string;
   commit_sha?: string;
+  plan_json_url?: string;
   created_by: string;
   started_at?: string | null;
   finished_at?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface TofuResourceChange {
+  address: string;
+  module_address?: string;
+  mode: string;
+  type: string;
+  name: string;
+  provider_name: string;
+  change: {
+    actions: string[];
+    before: Record<string, unknown> | null;
+    after: Record<string, unknown> | null;
+  };
+}
+
+export interface TofuPlanJSON {
+  format_version?: string;
+  resource_changes?: TofuResourceChange[];
 }
 
 export interface StateVersion {
@@ -81,6 +104,33 @@ export interface StateVersion {
   created_at: string;
 }
 
+export interface StateResource {
+  type: string;
+  name: string;
+  module: string;
+  provider: string;
+  mode: string;
+  attributes: Record<string, unknown>;
+}
+
+export interface ResourceDiff {
+  type: string;
+  name: string;
+  module: string;
+  action: "added" | "removed" | "changed" | "unchanged";
+  before?: Record<string, unknown>;
+  after?: Record<string, unknown>;
+  changed_keys?: string[];
+}
+
+export interface StateDiff {
+  added: number;
+  removed: number;
+  changed: number;
+  unchanged: number;
+  diffs: ResourceDiff[];
+}
+
 export interface WorkspaceVariable {
   id: string;
   workspace_id: string;
@@ -89,6 +139,7 @@ export interface WorkspaceVariable {
   value: string;
   sensitive: boolean;
   category: "terraform" | "env";
+  description: string;
   created_at: string;
   updated_at: string;
 }
@@ -191,6 +242,7 @@ export interface CreateVariableRequest {
   value: string;
   sensitive: boolean;
   category: "terraform" | "env";
+  description?: string;
 }
 
 export interface ApprovalRequest {
@@ -315,7 +367,7 @@ export interface paths {
   };
   "/workspaces": {
     get: {
-      parameters: { query?: { page?: number; per_page?: number } };
+      parameters: { query?: { page?: number; per_page?: number; search?: string; environment?: string } };
       responses: {
         200: { content: { "application/json": ListResponse<Workspace> } };
       };
@@ -396,6 +448,19 @@ export interface paths {
       };
     };
   };
+  "/workspaces/{workspaceId}/variables/bulk": {
+    post: {
+      parameters: { path: { workspaceId: string } };
+      requestBody: {
+        content: {
+          "application/json": { variables: CreateVariableRequest[] };
+        };
+      };
+      responses: {
+        201: { content: { "application/json": WorkspaceVariable[] } };
+      };
+    };
+  };
   "/workspaces/{workspaceId}/variables/{variableId}": {
     put: {
       parameters: { path: { workspaceId: string; variableId: string } };
@@ -413,6 +478,14 @@ export interface paths {
       };
     };
   };
+  "/workspaces/{workspaceId}/variables/{variableId}/value": {
+    get: {
+      parameters: { path: { workspaceId: string; variableId: string } };
+      responses: {
+        200: { content: { "application/json": { value: string } } };
+      };
+    };
+  };
   "/workspaces/{workspaceId}/state": {
     get: {
       parameters: { path: { workspaceId: string } };
@@ -427,6 +500,25 @@ export interface paths {
       responses: {
         200: { content: { "application/json": StateVersion } };
         404: { content: { "application/json": ErrorResponse } };
+      };
+    };
+  };
+  "/workspaces/{workspaceId}/state/current/resources": {
+    get: {
+      parameters: { path: { workspaceId: string } };
+      responses: {
+        200: { content: { "application/json": StateResource[] } };
+      };
+    };
+  };
+  "/workspaces/{workspaceId}/state/diff": {
+    get: {
+      parameters: {
+        path: { workspaceId: string };
+        query: { from: number; to: number };
+      };
+      responses: {
+        200: { content: { "application/json": StateDiff } };
       };
     };
   };
@@ -488,6 +580,14 @@ export interface paths {
       parameters: { path: { workspaceId: string; runId: string } };
       responses: {
         200: { content: { "application/json": Run } };
+      };
+    };
+  };
+  "/workspaces/{workspaceId}/runs/{runId}/plan-json": {
+    get: {
+      parameters: { path: { workspaceId: string; runId: string } };
+      responses: {
+        200: { content: { "application/json": TofuPlanJSON } };
       };
     };
   };

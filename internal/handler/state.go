@@ -10,6 +10,7 @@ import (
 	"github.com/stxkxs/tofui/internal/handler/respond"
 	"github.com/stxkxs/tofui/internal/repository"
 	"github.com/stxkxs/tofui/internal/storage"
+	"github.com/stxkxs/tofui/internal/tfstate"
 )
 
 type StateHandler struct {
@@ -107,4 +108,98 @@ func (h *StateHandler) Download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", "attachment; filename=terraform.tfstate")
 	w.WriteHeader(http.StatusOK)
 	w.Write(data)
+}
+
+func (h *StateHandler) Resources(w http.ResponseWriter, r *http.Request) {
+	userCtx := auth.GetUser(r.Context())
+	workspaceID := chi.URLParam(r, "workspaceID")
+
+	sv, err := h.queries.GetLatestStateVersion(r.Context(), repository.GetLatestStateVersionParams{
+		WorkspaceID: workspaceID,
+		OrgID:       userCtx.OrgID,
+	})
+	if err != nil {
+		respond.Error(w, http.StatusNotFound, "no state found")
+		return
+	}
+
+	if h.storage == nil {
+		respond.Error(w, http.StatusServiceUnavailable, "storage not configured")
+		return
+	}
+
+	data, err := h.storage.GetState(r.Context(), sv.StateURL)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to fetch state")
+		return
+	}
+
+	resources, err := tfstate.ParseResources(data)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to parse state")
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, resources)
+}
+
+func (h *StateHandler) Diff(w http.ResponseWriter, r *http.Request) {
+	userCtx := auth.GetUser(r.Context())
+	workspaceID := chi.URLParam(r, "workspaceID")
+
+	fromSerial, err := strconv.Atoi(r.URL.Query().Get("from"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid 'from' serial")
+		return
+	}
+	toSerial, err := strconv.Atoi(r.URL.Query().Get("to"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid 'to' serial")
+		return
+	}
+
+	if h.storage == nil {
+		respond.Error(w, http.StatusServiceUnavailable, "storage not configured")
+		return
+	}
+
+	fromSV, err := h.queries.GetStateVersionBySerial(r.Context(), repository.GetStateVersionBySerialParams{
+		WorkspaceID: workspaceID,
+		OrgID:       userCtx.OrgID,
+		Serial:      int32(fromSerial),
+	})
+	if err != nil {
+		respond.Error(w, http.StatusNotFound, "state version not found for 'from' serial")
+		return
+	}
+
+	toSV, err := h.queries.GetStateVersionBySerial(r.Context(), repository.GetStateVersionBySerialParams{
+		WorkspaceID: workspaceID,
+		OrgID:       userCtx.OrgID,
+		Serial:      int32(toSerial),
+	})
+	if err != nil {
+		respond.Error(w, http.StatusNotFound, "state version not found for 'to' serial")
+		return
+	}
+
+	fromData, err := h.storage.GetState(r.Context(), fromSV.StateURL)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to fetch 'from' state")
+		return
+	}
+
+	toData, err := h.storage.GetState(r.Context(), toSV.StateURL)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to fetch 'to' state")
+		return
+	}
+
+	diff, err := tfstate.DiffStates(fromData, toData)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to diff states")
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, diff)
 }

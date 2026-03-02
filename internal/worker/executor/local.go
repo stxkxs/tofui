@@ -86,13 +86,20 @@ func (e *LocalExecutor) Execute(ctx context.Context, params ExecuteParams) (*Exe
 	}
 	params.LogCallback([]byte("\r\n"))
 
+	// tofu validate
+	params.LogCallback([]byte("\033[1m$ tofu validate\033[0m\r\n"))
+	if err := e.runTofu(ctx, tfDir, []string{"validate", "-no-color"}, env, params.LogCallback); err != nil {
+		return nil, fmt.Errorf("tofu validate failed: %w", err)
+	}
+	params.LogCallback([]byte("\r\n"))
+
 	// Execute operation
 	result := &ExecuteResult{}
 	var tfArgs []string
 
 	switch params.Operation {
 	case "plan":
-		tfArgs = []string{"plan", "-no-color", "-detailed-exitcode"}
+		tfArgs = []string{"plan", "-no-color", "-detailed-exitcode", "-out=planfile"}
 		if e.hasVarFile(tfDir) {
 			tfArgs = append(tfArgs, "-var-file=tofui.auto.tfvars")
 		}
@@ -123,6 +130,21 @@ func (e *LocalExecutor) Execute(ctx context.Context, params ExecuteParams) (*Exe
 	}
 
 	result.Output = output
+
+	// Generate JSON plan from planfile (plan operation only)
+	if params.Operation == "plan" {
+		planfilePath := filepath.Join(tfDir, "planfile")
+		if _, statErr := os.Stat(planfilePath); statErr == nil {
+			jsonCmd := exec.CommandContext(ctx, "tofu", "show", "-json", "planfile")
+			jsonCmd.Dir = tfDir
+			jsonCmd.Env = env
+			if jsonOut, jsonErr := jsonCmd.Output(); jsonErr == nil {
+				result.PlanJSON = jsonOut
+			} else {
+				logger.Warn("failed to generate JSON plan", "error", jsonErr)
+			}
+		}
+	}
 
 	// Parse plan summary
 	matches := planSummaryRegex.FindStringSubmatch(output)

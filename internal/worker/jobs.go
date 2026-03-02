@@ -190,6 +190,20 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 		}
 	}
 
+	// Upload JSON plan to S3 if available
+	if len(result.PlanJSON) > 0 && w.storage != nil {
+		planJSONURL, err := w.storage.PutPlanJSON(ctx, args.RunID, result.PlanJSON)
+		if err != nil {
+			logger.Error("failed to upload plan JSON", "error", err)
+		} else {
+			if err := w.queries.UpdateRunPlanJSONURL(ctx, repository.UpdateRunPlanJSONURLParams{
+				ID: args.RunID, PlanJSONURL: planJSONURL,
+			}); err != nil {
+				logger.Error("failed to update run plan JSON URL", "error", err)
+			}
+		}
+	}
+
 	// Upload state file to S3 after apply/destroy
 	if result.StateFile != nil && w.storage != nil {
 		latestSV, _ := w.queries.GetLatestStateVersion(ctx, repository.GetLatestStateVersionParams{

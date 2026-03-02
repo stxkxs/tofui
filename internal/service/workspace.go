@@ -52,19 +52,25 @@ type UpdateWorkspaceParams struct {
 	VcsTriggerEnabled *bool
 }
 
-func (s *WorkspaceService) List(ctx context.Context, orgID string, page, perPage int) ([]any, int64, error) {
+func (s *WorkspaceService) List(ctx context.Context, orgID string, page, perPage int, search, environment string) ([]any, int64, error) {
 	offset := int32((page - 1) * perPage)
 
-	workspaces, err := s.queries.ListWorkspaces(ctx, repository.ListWorkspacesParams{
-		OrgID:  orgID,
-		Limit:  int32(perPage),
-		Offset: offset,
+	workspaces, err := s.queries.ListWorkspacesWithSummary(ctx, repository.ListWorkspacesWithSummaryParams{
+		OrgID:       orgID,
+		Limit:       int32(perPage),
+		Offset:      offset,
+		Search:      search,
+		Environment: environment,
 	})
 	if err != nil {
 		return nil, 0, err
 	}
 
-	count, err := s.queries.CountWorkspaces(ctx, orgID)
+	count, err := s.queries.CountWorkspacesFiltered(ctx, repository.CountWorkspacesFilteredParams{
+		OrgID:       orgID,
+		Search:      search,
+		Environment: environment,
+	})
 	if err != nil {
 		return nil, 0, err
 	}

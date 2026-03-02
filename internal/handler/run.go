@@ -15,6 +15,7 @@ import (
 	"github.com/stxkxs/tofui/internal/handler/respond"
 	"github.com/stxkxs/tofui/internal/logstream"
 	"github.com/stxkxs/tofui/internal/service"
+	"github.com/stxkxs/tofui/internal/storage"
 )
 
 type RunHandler struct {
@@ -23,10 +24,11 @@ type RunHandler struct {
 	streamer       logstream.Streamer
 	auditSvc       *service.AuditService
 	allowedOrigins []string
+	storage        *storage.S3Storage
 }
 
-func NewRunHandler(svc *service.RunService, workspaceSvc *service.WorkspaceService, streamer logstream.Streamer, auditSvc *service.AuditService, allowedOrigins []string) *RunHandler {
-	return &RunHandler{svc: svc, workspaceSvc: workspaceSvc, streamer: streamer, auditSvc: auditSvc, allowedOrigins: allowedOrigins}
+func NewRunHandler(svc *service.RunService, workspaceSvc *service.WorkspaceService, streamer logstream.Streamer, auditSvc *service.AuditService, allowedOrigins []string, store *storage.S3Storage) *RunHandler {
+	return &RunHandler{svc: svc, workspaceSvc: workspaceSvc, streamer: streamer, auditSvc: auditSvc, allowedOrigins: allowedOrigins, storage: store}
 }
 
 // wsOriginPatterns converts full URLs to host patterns for websocket origin checking.
@@ -177,6 +179,37 @@ func (h *RunHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	})
 
 	respond.JSON(w, http.StatusOK, cancelled)
+}
+
+func (h *RunHandler) GetPlanJSON(w http.ResponseWriter, r *http.Request) {
+	userCtx := auth.GetUser(r.Context())
+	runID := chi.URLParam(r, "runID")
+
+	run, err := h.svc.Get(r.Context(), runID, userCtx.OrgID)
+	if err != nil {
+		respond.Error(w, http.StatusNotFound, "run not found")
+		return
+	}
+
+	if run.PlanJSONURL == "" {
+		respond.Error(w, http.StatusNotFound, "no plan JSON available")
+		return
+	}
+
+	if h.storage == nil {
+		respond.Error(w, http.StatusServiceUnavailable, "storage not configured")
+		return
+	}
+
+	data, err := h.storage.GetPlanJSON(r.Context(), run.PlanJSONURL)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to fetch plan JSON")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(data)
 }
 
 func (h *RunHandler) StreamLogs(w http.ResponseWriter, r *http.Request) {

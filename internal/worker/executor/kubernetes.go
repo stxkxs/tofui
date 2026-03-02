@@ -21,14 +21,16 @@ import (
 
 // KubernetesExecutor runs OpenTofu in ephemeral K8s pods.
 type KubernetesExecutor struct {
-	client    kubernetes.Interface
-	namespace string
-	image     string
+	client      kubernetes.Interface
+	namespace   string
+	image       string
+	imagePrefix string
 }
 
 type KubernetesExecutorConfig struct {
-	Namespace string // K8s namespace for executor pods
-	Image     string // Base executor image (e.g. "tofui-executor:tofu-1.11")
+	Namespace   string // K8s namespace for executor pods
+	Image       string // Base executor image (e.g. "tofui-executor:tofu-1.11")
+	ImagePrefix string // Image prefix for per-version images (e.g. "tofui-executor")
 }
 
 func NewKubernetesExecutor(cfg KubernetesExecutorConfig) (*KubernetesExecutor, error) {
@@ -51,10 +53,16 @@ func NewKubernetesExecutor(cfg KubernetesExecutorConfig) (*KubernetesExecutor, e
 		image = "tofui-executor:tofu-1.11"
 	}
 
+	imagePrefix := cfg.ImagePrefix
+	if imagePrefix == "" {
+		imagePrefix = "tofui-executor"
+	}
+
 	return &KubernetesExecutor{
-		client:    clientset,
-		namespace: ns,
-		image:     image,
+		client:      clientset,
+		namespace:   ns,
+		image:       image,
+		imagePrefix: imagePrefix,
 	}, nil
 }
 
@@ -171,6 +179,21 @@ func (e *KubernetesExecutor) Execute(ctx context.Context, params ExecuteParams) 
 		result.ResourcesDeleted = int32(deleted)
 	}
 
+	// For plan: extract JSON plan between markers
+	if params.Operation == "plan" {
+		jsonMarker := "===TOFUI_PLAN_JSON_BEGIN==="
+		jsonEndMarker := "===TOFUI_PLAN_JSON_END==="
+		if idx := strings.Index(output, jsonMarker); idx != -1 {
+			jsonData := output[idx+len(jsonMarker):]
+			if endIdx := strings.Index(jsonData, jsonEndMarker); endIdx != -1 {
+				jsonData = strings.TrimSpace(jsonData[:endIdx])
+				result.PlanJSON = []byte(jsonData)
+				// Remove JSON plan data from visible output
+				result.Output = output[:idx]
+			}
+		}
+	}
+
 	// For apply/destroy: the state file is output to stdout between markers
 	if params.Operation == "apply" || params.Operation == "destroy" {
 		stateMarker := "===TOFUI_STATE_BEGIN==="
@@ -219,6 +242,10 @@ func (e *KubernetesExecutor) buildScript(params ExecuteParams) string {
 	sb.WriteString("echo '$ tofu init'\n")
 	sb.WriteString("tofu init -no-color\n\n")
 
+	// Validate
+	sb.WriteString("echo '$ tofu validate'\n")
+	sb.WriteString("tofu validate -no-color\n\n")
+
 	// Operation
 	sb.WriteString("if [ -f tofui.auto.tfvars ]; then VAR_FILE='-var-file=tofui.auto.tfvars'; fi\n\n")
 
@@ -228,10 +255,16 @@ func (e *KubernetesExecutor) buildScript(params ExecuteParams) string {
 		// -detailed-exitcode: 0=no changes, 1=error, 2=changes detected
 		// Capture exit code explicitly — only fail on exit 1 (error)
 		sb.WriteString("set +e\n")
-		sb.WriteString("tofu plan -no-color -detailed-exitcode $VAR_FILE\n")
+		sb.WriteString("tofu plan -no-color -detailed-exitcode -out=planfile $VAR_FILE\n")
 		sb.WriteString("PLAN_EXIT=$?\n")
 		sb.WriteString("set -e\n")
 		sb.WriteString("if [ \"$PLAN_EXIT\" -eq 1 ]; then echo 'Plan failed with errors'; exit 1; fi\n")
+		sb.WriteString("\n# Output JSON plan for capture\n")
+		sb.WriteString("if [ -f planfile ]; then\n")
+		sb.WriteString("  echo '===TOFUI_PLAN_JSON_BEGIN==='\n")
+		sb.WriteString("  tofu show -json planfile\n")
+		sb.WriteString("  echo '===TOFUI_PLAN_JSON_END==='\n")
+		sb.WriteString("fi\n")
 	case "apply":
 		sb.WriteString("echo '$ tofu apply'\n")
 		sb.WriteString("tofu apply -no-color -auto-approve $VAR_FILE\n")
@@ -253,6 +286,16 @@ func (e *KubernetesExecutor) buildScript(params ExecuteParams) string {
 	}
 
 	return sb.String()
+}
+
+// resolveImage returns an image tag for the given tofu version.
+// If a version is specified, it builds "{imagePrefix}:tofu-{version}";
+// otherwise it falls back to the default image.
+func (e *KubernetesExecutor) resolveImage(tofuVersion string) string {
+	if tofuVersion != "" {
+		return fmt.Sprintf("%s:tofu-%s", e.imagePrefix, tofuVersion)
+	}
+	return e.image
 }
 
 func (e *KubernetesExecutor) buildPod(name string, params ExecuteParams, envVars []corev1.EnvVar) *corev1.Pod {
@@ -296,7 +339,7 @@ func (e *KubernetesExecutor) buildPod(name string, params ExecuteParams, envVars
 			Containers: []corev1.Container{
 				{
 					Name:         "tofu",
-					Image:        e.image,
+					Image:        e.resolveImage(params.TofuVersion),
 					Command:      []string{"/bin/sh", "/config/run.sh"},
 					Env:          envVars,
 					VolumeMounts: volumeMounts,

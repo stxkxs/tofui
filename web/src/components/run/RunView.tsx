@@ -10,10 +10,10 @@ import { ApprovalPanel } from "./ApprovalPanel";
 import { PlanDiffViewer } from "./PlanDiffViewer";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { formatRelativeTime } from "@/lib/utils";
+import { formatRelativeTime, formatDuration } from "@/lib/utils";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Clock, GitCommit, XCircle } from "lucide-react";
-import type { RunStatus } from "@/api/types";
+import { ArrowLeft, Clock, Timer, GitCommit, XCircle, RotateCcw } from "lucide-react";
+import type { RunStatus, TofuPlanJSON } from "@/api/types";
 
 interface Props {
   workspaceId: string;
@@ -72,6 +72,19 @@ export function RunView({ workspaceId, runId }: Props) {
 
   const hasChanges = !!run?.plan_output && isTerminal;
 
+  const { data: planJSON } = useQuery({
+    queryKey: ["plan-json", runId],
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/workspaces/{workspaceId}/runs/{runId}/plan-json",
+        { params: { path: { workspaceId, runId } } }
+      );
+      if (error) throw error;
+      return data as TofuPlanJSON;
+    },
+    enabled: activeTab === "changes" && !!run?.plan_json_url,
+  });
+
   const isCancellable =
     run?.status === "pending" ||
     run?.status === "queued" ||
@@ -93,6 +106,27 @@ export function RunView({ workspaceId, runId }: Props) {
       toast.success("Run cancelled");
     },
     onError: () => toast.error("Failed to cancel run"),
+  });
+
+  const isRetryable = run?.status === "errored" || run?.status === "cancelled";
+
+  const retryMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST(
+        "/workspaces/{workspaceId}/runs",
+        {
+          params: { path: { workspaceId } },
+          body: { operation: run?.operation },
+        }
+      );
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (newRun) => {
+      toast.success("Retry run created");
+      window.location.href = `/workspaces/${workspaceId}/runs/${newRun.id}`;
+    },
+    onError: () => toast.error("Failed to retry run"),
   });
 
   const handleData = useCallback((data: string) => {
@@ -144,6 +178,7 @@ export function RunView({ workspaceId, runId }: Props) {
 
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
+    wroteOutputRef.current = false;
 
     const observer = new ResizeObserver(() => {
       fitAddon.fit();
@@ -162,6 +197,7 @@ export function RunView({ workspaceId, runId }: Props) {
   useEffect(() => {
     if (!terminalRef.current || wroteOutputRef.current) return;
     if (run?.plan_output && isTerminal) {
+      terminalRef.current.clear();
       terminalRef.current.write(run.plan_output.replace(/\n/g, "\r\n"));
       wroteOutputRef.current = true;
     }
@@ -226,13 +262,26 @@ export function RunView({ workspaceId, runId }: Props) {
                 Cancel
               </Button>
             )}
+            {isRetryable && (
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label="Retry run"
+                onClick={() => retryMutation.mutate()}
+                disabled={retryMutation.isPending}
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Retry
+              </Button>
+            )}
             <span className="flex items-center gap-1.5">
               <Clock className="w-4 h-4" />
               {formatRelativeTime(run.created_at)}
             </span>
-            {run.finished_at && (
+            {run.started_at && (
               <span className="flex items-center gap-1.5">
-                Finished {formatRelativeTime(run.finished_at)}
+                <Timer className="w-4 h-4" />
+                {formatDuration(run.started_at, run.finished_at)}
               </span>
             )}
             {run.commit_sha && (
@@ -309,7 +358,7 @@ export function RunView({ workspaceId, runId }: Props) {
       {/* Changes tab */}
       {activeTab === "changes" && hasChanges && (
         <div className="flex-1 min-h-0 overflow-auto">
-          <PlanDiffViewer planOutput={run.plan_output!} />
+          <PlanDiffViewer planOutput={run.plan_output!} planJSON={planJSON} />
         </div>
       )}
 

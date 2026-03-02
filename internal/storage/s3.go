@@ -81,6 +81,26 @@ func (s *S3Storage) GetLog(ctx context.Context, key string) ([]byte, error) {
 	return io.ReadAll(obj)
 }
 
+func (s *S3Storage) PutPlanJSON(ctx context.Context, runID string, data []byte) (string, error) {
+	key := fmt.Sprintf("plans/%s/plan.json", runID)
+	_, err := s.client.PutObject(ctx, s.bucket, key, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{
+		ContentType: "application/json",
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to upload plan JSON: %w", err)
+	}
+	return key, nil
+}
+
+func (s *S3Storage) GetPlanJSON(ctx context.Context, key string) ([]byte, error) {
+	obj, err := s.client.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer obj.Close()
+	return io.ReadAll(obj)
+}
+
 func (s *S3Storage) PutModule(ctx context.Context, namespace, name, provider, version string, data []byte) (string, error) {
 	key := fmt.Sprintf("modules/%s/%s/%s/%s.tar.gz", namespace, name, provider, version)
 	_, err := s.client.PutObject(ctx, s.bucket, key, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{

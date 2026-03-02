@@ -13,7 +13,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
 
   return (
-    <div className="min-h-screen flex">
+    <div className="h-screen flex">
       {/* Sidebar */}
       <aside className="w-60 border-r border-border bg-card flex flex-col" aria-label="Main navigation">
         <div className="p-4 border-b border-border">

@@ -132,7 +132,7 @@ func (s *Server) setupRouter() {
 	if s.cfg.Environment == "development" {
 		wsOrigins = append(wsOrigins, "http://localhost:5173")
 	}
-	runHandler := handler.NewRunHandler(s.runSvc, workspaceSvc, streamer, auditSvc, wsOrigins)
+	runHandler := handler.NewRunHandler(s.runSvc, workspaceSvc, streamer, auditSvc, wsOrigins, store)
 	variableHandler := handler.NewVariableHandler(queries, encryptor, auditSvc, workspaceSvc)
 	teamHandler := handler.NewTeamHandler(queries, auditSvc)
 	stateHandler := handler.NewStateHandler(queries, store)
@@ -197,14 +197,20 @@ func (s *Server) setupRouter() {
 						r.Get("/", variableHandler.List)
 						r.Post("/", variableHandler.Create)
 						r.Post("/discover", variableHandler.Discover)
-						r.Put("/{variableID}", variableHandler.Update)
-						r.Delete("/{variableID}", variableHandler.Delete)
+						r.Post("/bulk", variableHandler.BulkCreate)
+						r.Route("/{variableID}", func(r chi.Router) {
+							r.Put("/", variableHandler.Update)
+							r.Delete("/", variableHandler.Delete)
+							r.With(auth.RequireRole("operator")).Get("/value", variableHandler.RevealValue)
+						})
 					})
 
 					// State versions
 					r.Route("/state", func(r chi.Router) {
 						r.Get("/", stateHandler.List)
 						r.Get("/current", stateHandler.GetCurrent)
+						r.Get("/current/resources", stateHandler.Resources)
+						r.Get("/diff", stateHandler.Diff)
 						r.Get("/{stateID}", stateHandler.Get)
 						r.Get("/{stateID}/download", stateHandler.Download)
 					})
@@ -220,6 +226,7 @@ func (s *Server) setupRouter() {
 						r.Post("/", runHandler.Create)
 						r.Route("/{runID}", func(r chi.Router) {
 							r.Get("/", runHandler.Get)
+							r.Get("/plan-json", runHandler.GetPlanJSON)
 							r.Get("/logs/ws", runHandler.StreamLogs)
 							r.With(auth.RequireRole("operator")).Post("/cancel", runHandler.Cancel)
 

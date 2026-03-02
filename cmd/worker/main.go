@@ -110,8 +110,9 @@ func main() {
 	switch cfg.ExecutorType {
 	case "kubernetes":
 		k8sExec, err := executor.NewKubernetesExecutor(executor.KubernetesExecutorConfig{
-			Namespace: cfg.ExecutorNamespace,
-			Image:     cfg.ExecutorImage,
+			Namespace:   cfg.ExecutorNamespace,
+			Image:       cfg.ExecutorImage,
+			ImagePrefix: cfg.ExecutorImagePrefix,
 		})
 		if err != nil {
 			logger.Error("failed to create kubernetes executor", "error", err)

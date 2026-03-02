@@ -11,12 +11,14 @@ import { VariablesPanel } from "@/components/workspace/VariablesPanel";
 import { StateExplorer } from "@/components/workspace/StateExplorer";
 import { AccessPanel } from "@/components/workspace/AccessPanel";
 import { WorkspaceSettings } from "@/components/workspace/WorkspaceSettings";
-import { formatRelativeTime, getEnvironmentColor } from "@/lib/utils";
+import { Pagination } from "@/components/ui/pagination";
+import { formatRelativeTime, formatDuration, getEnvironmentColor } from "@/lib/utils";
 import {
   Play,
   ArrowLeft,
   GitBranch,
   Clock,
+  Timer,
   Settings,
   Database,
   Key,
@@ -44,6 +46,7 @@ function getTabFromURL(): Tab {
 export function WorkspaceDetail({ workspaceId }: Props) {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>(getTabFromURL);
+  const [runsPage, setRunsPage] = useState(1);
 
   const handleTabChange = (t: Tab) => {
     setTab(t);
@@ -68,14 +71,14 @@ export function WorkspaceDetail({ workspaceId }: Props) {
   });
 
   const { data: runsData, isLoading: runsLoading, isError: runsError } = useQuery({
-    queryKey: ["runs", workspaceId],
+    queryKey: ["runs", workspaceId, runsPage],
     queryFn: async () => {
       const { data, error } = await api.GET(
         "/workspaces/{workspaceId}/runs",
         {
           params: {
             path: { workspaceId },
-            query: { per_page: 50 },
+            query: { page: runsPage, per_page: 20 },
           },
         }
       );
@@ -313,8 +316,14 @@ export function WorkspaceDetail({ workspaceId }: Props) {
                           {run.id.slice(0, 8)}
                         </span>
                       </div>
-                      <div className="text-xs text-muted-foreground mt-0.5">
-                        {formatRelativeTime(run.created_at)}
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                        <span>{formatRelativeTime(run.created_at)}</span>
+                        {run.started_at && (
+                          <span className="flex items-center gap-1">
+                            <Timer className="w-3 h-3" />
+                            {formatDuration(run.started_at, run.finished_at)}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -341,6 +350,12 @@ export function WorkspaceDetail({ workspaceId }: Props) {
                   ) : null}
                 </a>
               ))}
+              <Pagination
+                page={runsPage}
+                perPage={20}
+                total={runsData.total}
+                onPageChange={setRunsPage}
+              />
             </div>
           )}
         </div>

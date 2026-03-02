@@ -176,6 +176,83 @@ func (q *Queries) SetWorkspaceCurrentRun(ctx context.Context, arg SetWorkspaceCu
 	return err
 }
 
+func scanWorkspaceSummary(row interface{ Scan(...interface{}) error }) (WorkspaceSummary, error) {
+	var ws WorkspaceSummary
+	err := row.Scan(
+		&ws.ID, &ws.OrgID, &ws.Name, &ws.Description, &ws.RepoURL, &ws.RepoBranch,
+		&ws.WorkingDir, &ws.TofuVersion, &ws.Environment, &ws.AutoApply, &ws.RequiresApproval,
+		&ws.VcsTriggerEnabled, &ws.Locked, &ws.LockedBy, &ws.CurrentRunID, &ws.CreatedBy,
+		&ws.CreatedAt, &ws.UpdatedAt,
+		&ws.LastRunStatus, &ws.LastRunAt, &ws.ResourceCount,
+	)
+	return ws, err
+}
+
+type ListWorkspacesWithSummaryParams struct {
+	OrgID       string `json:"org_id"`
+	Limit       int32  `json:"limit"`
+	Offset      int32  `json:"offset"`
+	Search      string `json:"search"`
+	Environment string `json:"environment"`
+}
+
+func (q *Queries) ListWorkspacesWithSummary(ctx context.Context, arg ListWorkspacesWithSummaryParams) ([]WorkspaceSummary, error) {
+	rows, err := q.db.Query(ctx,
+		`SELECT `+workspaceColumns+`,
+		       lr.status AS last_run_status,
+		       lr.created_at AS last_run_at,
+		       COALESCE(sv.resource_count, 0) AS resource_count
+		FROM workspaces w
+		LEFT JOIN LATERAL (
+		    SELECT status, created_at FROM runs WHERE workspace_id = w.id ORDER BY created_at DESC LIMIT 1
+		) lr ON true
+		LEFT JOIN LATERAL (
+		    SELECT resource_count FROM state_versions WHERE workspace_id = w.id ORDER BY serial DESC LIMIT 1
+		) sv ON true
+		WHERE w.org_id = $1
+		  AND ($4::TEXT = '' OR w.name ILIKE '%' || $4 || '%')
+		  AND ($5::TEXT = '' OR w.environment = $5)
+		ORDER BY w.created_at DESC LIMIT $2 OFFSET $3`,
+		arg.OrgID, arg.Limit, arg.Offset, arg.Search, arg.Environment,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var workspaces []WorkspaceSummary
+	for rows.Next() {
+		ws, err := scanWorkspaceSummary(rows)
+		if err != nil {
+			return nil, err
+		}
+		workspaces = append(workspaces, ws)
+	}
+	if workspaces == nil {
+		workspaces = []WorkspaceSummary{}
+	}
+	return workspaces, rows.Err()
+}
+
+type CountWorkspacesFilteredParams struct {
+	OrgID       string `json:"org_id"`
+	Search      string `json:"search"`
+	Environment string `json:"environment"`
+}
+
+func (q *Queries) CountWorkspacesFiltered(ctx context.Context, arg CountWorkspacesFilteredParams) (int64, error) {
+	row := q.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM workspaces
+		WHERE org_id = $1
+		  AND ($2::TEXT = '' OR name ILIKE '%' || $2 || '%')
+		  AND ($3::TEXT = '' OR environment = $3)`,
+		arg.OrgID, arg.Search, arg.Environment,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 type FindWorkspacesByRepoParams struct {
 	RepoURL    string `json:"repo_url"`
 	RepoBranch string `json:"repo_branch"`

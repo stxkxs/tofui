@@ -41,3 +41,26 @@ RETURNING *;
 UPDATE workspaces
 SET current_run_id = $3, updated_at = NOW()
 WHERE id = $1 AND org_id = $2;
+
+-- name: ListWorkspacesWithSummary :many
+SELECT w.*,
+       lr.status AS last_run_status,
+       lr.created_at AS last_run_at,
+       COALESCE(sv.resource_count, 0) AS resource_count
+FROM workspaces w
+LEFT JOIN LATERAL (
+    SELECT status, created_at FROM runs WHERE workspace_id = w.id ORDER BY created_at DESC LIMIT 1
+) lr ON true
+LEFT JOIN LATERAL (
+    SELECT resource_count FROM state_versions WHERE workspace_id = w.id ORDER BY serial DESC LIMIT 1
+) sv ON true
+WHERE w.org_id = $1
+  AND ($4::TEXT = '' OR w.name ILIKE '%' || $4 || '%')
+  AND ($5::TEXT = '' OR w.environment = $5)
+ORDER BY w.created_at DESC LIMIT $2 OFFSET $3;
+
+-- name: CountWorkspacesFiltered :one
+SELECT COUNT(*) FROM workspaces
+WHERE org_id = $1
+  AND ($2::TEXT = '' OR name ILIKE '%' || $2 || '%')
+  AND ($3::TEXT = '' OR environment = $3);

@@ -80,6 +80,20 @@ func (q *Queries) ListStateVersionsByWorkspace(ctx context.Context, arg ListStat
 	return versions, rows.Err()
 }
 
+type GetStateVersionBySerialParams struct {
+	WorkspaceID string `json:"workspace_id"`
+	OrgID       string `json:"org_id"`
+	Serial      int32  `json:"serial"`
+}
+
+func (q *Queries) GetStateVersionBySerial(ctx context.Context, arg GetStateVersionBySerialParams) (StateVersion, error) {
+	row := q.db.QueryRow(ctx,
+		`SELECT `+stateVersionColumns+` FROM state_versions WHERE workspace_id = $1 AND org_id = $2 AND serial = $3`,
+		arg.WorkspaceID, arg.OrgID, arg.Serial,
+	)
+	return scanStateVersion(row)
+}
+
 type GetLatestStateVersionParams struct {
 	WorkspaceID string `json:"workspace_id"`
 	OrgID       string `json:"org_id"`

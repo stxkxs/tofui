@@ -2,11 +2,11 @@ package repository
 
 import "context"
 
-const varColumns = `id, workspace_id, org_id, key, value, sensitive, category, created_at, updated_at`
+const varColumns = `id, workspace_id, org_id, key, value, sensitive, category, description, created_at, updated_at`
 
 func scanVariable(row interface{ Scan(...interface{}) error }) (WorkspaceVariable, error) {
 	var v WorkspaceVariable
-	err := row.Scan(&v.ID, &v.WorkspaceID, &v.OrgID, &v.Key, &v.Value, &v.Sensitive, &v.Category, &v.CreatedAt, &v.UpdatedAt)
+	err := row.Scan(&v.ID, &v.WorkspaceID, &v.OrgID, &v.Key, &v.Value, &v.Sensitive, &v.Category, &v.Description, &v.CreatedAt, &v.UpdatedAt)
 	return v, err
 }
 
@@ -60,31 +60,33 @@ type CreateWorkspaceVariableParams struct {
 	Value       string
 	Sensitive   bool
 	Category    string
+	Description string
 }
 
 func (q *Queries) CreateWorkspaceVariable(ctx context.Context, arg CreateWorkspaceVariableParams) (WorkspaceVariable, error) {
 	row := q.db.QueryRow(ctx,
-		`INSERT INTO workspace_variables (id, workspace_id, org_id, key, value, sensitive, category)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`INSERT INTO workspace_variables (id, workspace_id, org_id, key, value, sensitive, category, description)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING `+varColumns,
-		arg.ID, arg.WorkspaceID, arg.OrgID, arg.Key, arg.Value, arg.Sensitive, arg.Category,
+		arg.ID, arg.WorkspaceID, arg.OrgID, arg.Key, arg.Value, arg.Sensitive, arg.Category, arg.Description,
 	)
 	return scanVariable(row)
 }
 
 type UpdateWorkspaceVariableParams struct {
-	ID        string
-	OrgID     string
-	Value     string
-	Sensitive bool
+	ID          string
+	OrgID       string
+	Value       string
+	Sensitive   bool
+	Description string
 }
 
 func (q *Queries) UpdateWorkspaceVariable(ctx context.Context, arg UpdateWorkspaceVariableParams) (WorkspaceVariable, error) {
 	row := q.db.QueryRow(ctx,
-		`UPDATE workspace_variables SET value = $3, sensitive = $4, updated_at = NOW()
+		`UPDATE workspace_variables SET value = $3, sensitive = $4, description = $5, updated_at = NOW()
 		WHERE id = $1 AND org_id = $2
 		RETURNING `+varColumns,
-		arg.ID, arg.OrgID, arg.Value, arg.Sensitive,
+		arg.ID, arg.OrgID, arg.Value, arg.Sensitive, arg.Description,
 	)
 	return scanVariable(row)
 }

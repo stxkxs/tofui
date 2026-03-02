@@ -7,11 +7,11 @@ package repository
 
 import "context"
 
-const runColumns = `id, workspace_id, org_id, operation, status, plan_output, plan_log_url, apply_log_url, resources_added, resources_changed, resources_deleted, error_message, commit_sha, created_by, started_at, finished_at, created_at, updated_at`
+const runColumns = `id, workspace_id, org_id, operation, status, plan_output, plan_log_url, apply_log_url, resources_added, resources_changed, resources_deleted, error_message, commit_sha, plan_json_url, created_by, started_at, finished_at, created_at, updated_at`
 
 func scanRun(row interface{ Scan(...interface{}) error }) (Run, error) {
 	var r Run
-	err := row.Scan(&r.ID, &r.WorkspaceID, &r.OrgID, &r.Operation, &r.Status, &r.PlanOutput, &r.PlanLogURL, &r.ApplyLogURL, &r.ResourcesAdded, &r.ResourcesChanged, &r.ResourcesDeleted, &r.ErrorMessage, &r.CommitSHA, &r.CreatedBy, &r.StartedAt, &r.FinishedAt, &r.CreatedAt, &r.UpdatedAt)
+	err := row.Scan(&r.ID, &r.WorkspaceID, &r.OrgID, &r.Operation, &r.Status, &r.PlanOutput, &r.PlanLogURL, &r.ApplyLogURL, &r.ResourcesAdded, &r.ResourcesChanged, &r.ResourcesDeleted, &r.ErrorMessage, &r.CommitSHA, &r.PlanJSONURL, &r.CreatedBy, &r.StartedAt, &r.FinishedAt, &r.CreatedAt, &r.UpdatedAt)
 	return r, err
 }
 
@@ -220,6 +220,19 @@ type UpdateRunLogURLsParams struct {
 	ID          string  `json:"id"`
 	PlanLogURL  *string `json:"plan_log_url"`
 	ApplyLogURL *string `json:"apply_log_url"`
+}
+
+type UpdateRunPlanJSONURLParams struct {
+	ID          string `json:"id"`
+	PlanJSONURL string `json:"plan_json_url"`
+}
+
+func (q *Queries) UpdateRunPlanJSONURL(ctx context.Context, arg UpdateRunPlanJSONURLParams) error {
+	_, err := q.db.Exec(ctx,
+		`UPDATE runs SET plan_json_url = $2, updated_at = NOW() WHERE id = $1`,
+		arg.ID, arg.PlanJSONURL,
+	)
+	return err
 }
 
 func (q *Queries) UpdateRunLogURLs(ctx context.Context, arg UpdateRunLogURLsParams) (Run, error) {

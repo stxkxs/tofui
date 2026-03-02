@@ -33,10 +33,11 @@ func NewVariableHandler(queries *repository.Queries, encryptor *secrets.Encrypto
 }
 
 type CreateVariableRequest struct {
-	Key       string `json:"key"`
-	Value     string `json:"value"`
-	Sensitive bool   `json:"sensitive"`
-	Category  string `json:"category"`
+	Key         string `json:"key"`
+	Value       string `json:"value"`
+	Sensitive   bool   `json:"sensitive"`
+	Category    string `json:"category"`
+	Description string `json:"description"`
 }
 
 type VariableResponse struct {
@@ -113,6 +114,7 @@ func (h *VariableHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Value:       value,
 		Sensitive:   req.Sensitive,
 		Category:    req.Category,
+		Description: req.Description,
 	})
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, "failed to create variable")
@@ -178,7 +180,7 @@ func (h *VariableHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	v, err := h.queries.UpdateWorkspaceVariable(r.Context(), repository.UpdateWorkspaceVariableParams{
-		ID: varID, OrgID: userCtx.OrgID, Value: value, Sensitive: req.Sensitive,
+		ID: varID, OrgID: userCtx.OrgID, Value: value, Sensitive: req.Sensitive, Description: req.Description,
 	})
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, "failed to update variable")
@@ -302,4 +304,127 @@ func (h *VariableHandler) Discover(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond.JSON(w, http.StatusOK, result)
+}
+
+type BulkCreateVariablesRequest struct {
+	Variables []CreateVariableRequest `json:"variables"`
+}
+
+func (h *VariableHandler) BulkCreate(w http.ResponseWriter, r *http.Request) {
+	userCtx := auth.GetUser(r.Context())
+	workspaceID := chi.URLParam(r, "workspaceID")
+
+	var req BulkCreateVariablesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if len(req.Variables) == 0 {
+		respond.Error(w, http.StatusBadRequest, "variables array is required")
+		return
+	}
+	if len(req.Variables) > 50 {
+		respond.Error(w, http.StatusBadRequest, "maximum 50 variables per batch")
+		return
+	}
+
+	// Check for duplicate keys within the batch
+	seen := make(map[string]bool, len(req.Variables))
+	for _, v := range req.Variables {
+		if v.Key == "" {
+			respond.Error(w, http.StatusBadRequest, "all variables must have a key")
+			return
+		}
+		if seen[v.Key] {
+			respond.Error(w, http.StatusBadRequest, "duplicate key: "+v.Key)
+			return
+		}
+		seen[v.Key] = true
+	}
+
+	created := make([]repository.WorkspaceVariable, 0, len(req.Variables))
+	ip, ua := auditContext(r)
+
+	for _, rv := range req.Variables {
+		if rv.Category == "" {
+			rv.Category = "terraform"
+		}
+		if rv.Category != "terraform" && rv.Category != "env" {
+			respond.Error(w, http.StatusBadRequest, "category must be 'terraform' or 'env' for key: "+rv.Key)
+			return
+		}
+
+		value := rv.Value
+		if rv.Sensitive && h.encryptor != nil {
+			encrypted, err := h.encryptor.Encrypt(rv.Value)
+			if err != nil {
+				respond.Error(w, http.StatusInternalServerError, "failed to encrypt value")
+				return
+			}
+			value = encrypted
+		}
+
+		v, err := h.queries.CreateWorkspaceVariable(r.Context(), repository.CreateWorkspaceVariableParams{
+			ID:          ulid.Make().String(),
+			WorkspaceID: workspaceID,
+			OrgID:       userCtx.OrgID,
+			Key:         rv.Key,
+			Value:       value,
+			Sensitive:   rv.Sensitive,
+			Category:    rv.Category,
+			Description: rv.Description,
+		})
+		if err != nil {
+			respond.Error(w, http.StatusInternalServerError, "failed to create variable: "+rv.Key)
+			return
+		}
+
+		auditVar := v
+		auditVar.Value = "***"
+		h.auditSvc.Log(r.Context(), service.AuditEntry{
+			OrgID: userCtx.OrgID, UserID: userCtx.UserID,
+			Action: "variable.create", EntityType: "variable", EntityID: v.ID,
+			After: auditVar, IPAddress: ip, UserAgent: ua,
+		})
+
+		if v.Sensitive {
+			v.Value = "***"
+		}
+		created = append(created, v)
+	}
+
+	respond.JSON(w, http.StatusCreated, created)
+}
+
+func (h *VariableHandler) RevealValue(w http.ResponseWriter, r *http.Request) {
+	userCtx := auth.GetUser(r.Context())
+	varID := chi.URLParam(r, "variableID")
+
+	v, err := h.queries.GetWorkspaceVariable(r.Context(), repository.GetWorkspaceVariableParams{
+		ID: varID, OrgID: userCtx.OrgID,
+	})
+	if err != nil {
+		respond.Error(w, http.StatusNotFound, "variable not found")
+		return
+	}
+
+	value := v.Value
+	if v.Sensitive && h.encryptor != nil {
+		decrypted, err := h.encryptor.Decrypt(v.Value)
+		if err != nil {
+			respond.Error(w, http.StatusInternalServerError, "failed to decrypt variable")
+			return
+		}
+		value = decrypted
+	}
+
+	ip, ua := auditContext(r)
+	h.auditSvc.Log(r.Context(), service.AuditEntry{
+		OrgID: userCtx.OrgID, UserID: userCtx.UserID,
+		Action: "variable.reveal", EntityType: "variable", EntityID: varID,
+		IPAddress: ip, UserAgent: ua,
+	})
+
+	respond.JSON(w, http.StatusOK, map[string]string{"value": value})
 }

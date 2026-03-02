@@ -54,6 +54,9 @@ WHERE workspace_id = $1 AND status = 'pending'
 ORDER BY created_at ASC
 LIMIT 1;
 
+-- name: UpdateRunPlanJSONURL :exec
+UPDATE runs SET plan_json_url = $2, updated_at = NOW() WHERE id = $1;
+
 -- name: GetActiveRunForWorkspace :one
 SELECT * FROM runs
 WHERE workspace_id = $1
