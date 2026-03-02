@@ -1,0 +1,1340 @@
+openapi: "3.1.0"
+info:
+  title: Tofui API
+  version: "1.0.0"
+  description: OpenTofu Lifecycle Management API
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development
+
+paths:
+  /health:
+    get:
+      operationId: healthCheck
+      summary: Health check
+      tags: [system]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  services:
+                    type: object
+                    additionalProperties:
+                      type: string
+        "503":
+          description: Service degraded
+
+  /auth/github:
+    get:
+      operationId: githubLogin
+      summary: Initiate GitHub OAuth login
+      tags: [auth]
+      responses:
+        "307":
+          description: Redirect to GitHub
+
+  /auth/github/callback:
+    get:
+      operationId: githubCallback
+      summary: GitHub OAuth callback
+      tags: [auth]
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "307":
+          description: Redirect to frontend with token
+
+  /webhooks/github:
+    post:
+      operationId: githubWebhook
+      summary: GitHub push webhook
+      description: Receives GitHub push events and triggers plan runs on matching workspaces. Requires HMAC-SHA256 signature verification.
+      tags: [webhooks]
+      parameters:
+        - name: X-Hub-Signature-256
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: X-GitHub-Event
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Webhook processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  triggered:
+                    type: integer
+                  message:
+                    type: string
+        "401":
+          description: Invalid signature
+
+  /auth/me:
+    get:
+      operationId: getMe
+      summary: Get current user
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /users:
+    get:
+      operationId: listUsers
+      summary: List users (admin only)
+      tags: [users]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+
+  /users/{userId}/role:
+    put:
+      operationId: updateUserRole
+      summary: Update user role (owner only)
+      tags: [users]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  type: string
+                  enum: [owner, admin, operator, viewer]
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          description: Invalid role or cannot demote last owner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /audit-logs:
+    get:
+      operationId: listAuditLogs
+      summary: List audit logs (admin only)
+      tags: [audit]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: List of audit log entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditLog"
+
+  /teams:
+    get:
+      operationId: listTeams
+      summary: List teams
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of teams
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Team"
+    post:
+      operationId: createTeam
+      summary: Create team (admin only)
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        "201":
+          description: Created team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Team"
+
+  /teams/{teamId}:
+    get:
+      operationId: getTeam
+      summary: Get team
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamId"
+      responses:
+        "200":
+          description: Team details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Team"
+    delete:
+      operationId: deleteTeam
+      summary: Delete team (admin only)
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamId"
+      responses:
+        "204":
+          description: Deleted
+
+  /teams/{teamId}/members:
+    get:
+      operationId: listTeamMembers
+      summary: List team members
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamId"
+      responses:
+        "200":
+          description: List of team members
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TeamMember"
+    post:
+      operationId: addTeamMember
+      summary: Add team member (admin only)
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, role]
+              properties:
+                user_id:
+                  type: string
+                role:
+                  type: string
+      responses:
+        "201":
+          description: Added member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamMember"
+
+  /teams/{teamId}/members/{userId}:
+    delete:
+      operationId: removeTeamMember
+      summary: Remove team member (admin only)
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamId"
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Removed
+
+  /workspaces:
+    get:
+      operationId: listWorkspaces
+      summary: List workspaces
+      tags: [workspaces]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: List of workspaces
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceList"
+    post:
+      operationId: createWorkspace
+      summary: Create workspace
+      tags: [workspaces]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWorkspaceRequest"
+      responses:
+        "201":
+          description: Created workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+
+  /workspaces/{workspaceId}:
+    get:
+      operationId: getWorkspace
+      summary: Get workspace
+      tags: [workspaces]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Workspace details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateWorkspace
+      summary: Update workspace
+      tags: [workspaces]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWorkspaceRequest"
+      responses:
+        "200":
+          description: Updated workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+    delete:
+      operationId: deleteWorkspace
+      summary: Delete workspace (admin only)
+      tags: [workspaces]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "204":
+          description: Deleted
+
+  /workspaces/{workspaceId}/lock:
+    post:
+      operationId: lockWorkspace
+      summary: Lock workspace (operator+)
+      tags: [workspaces]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Locked workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+        "409":
+          description: Already locked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /workspaces/{workspaceId}/unlock:
+    post:
+      operationId: unlockWorkspace
+      summary: Unlock workspace (operator+)
+      tags: [workspaces]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Unlocked workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+
+  /workspaces/{workspaceId}/variables:
+    get:
+      operationId: listVariables
+      summary: List workspace variables
+      tags: [variables]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: List of variables
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkspaceVariable"
+    post:
+      operationId: createVariable
+      summary: Create variable
+      tags: [variables]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVariableRequest"
+      responses:
+        "201":
+          description: Created variable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceVariable"
+
+  /workspaces/{workspaceId}/variables/discover:
+    post:
+      operationId: discoverVariables
+      summary: Discover variables from repository
+      description: Clones the workspace repository, parses .tf files for variable blocks, and returns discovered variables annotated with whether they are already configured.
+      tags: [variables]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: List of discovered variables
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DiscoveredVariable"
+        "400":
+          description: Workspace has no repo URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          description: Failed to clone repository or parse files
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /workspaces/{workspaceId}/variables/{variableId}:
+    put:
+      operationId: updateVariable
+      summary: Update variable
+      tags: [variables]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/VariableId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVariableRequest"
+      responses:
+        "200":
+          description: Updated variable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceVariable"
+    delete:
+      operationId: deleteVariable
+      summary: Delete variable
+      tags: [variables]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/VariableId"
+      responses:
+        "204":
+          description: Deleted
+
+  /workspaces/{workspaceId}/state:
+    get:
+      operationId: listStateVersions
+      summary: List state versions
+      tags: [state]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: List of state versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StateVersion"
+
+  /workspaces/{workspaceId}/state/current:
+    get:
+      operationId: getCurrentState
+      summary: Get current state version
+      tags: [state]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Current state version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StateVersion"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /workspaces/{workspaceId}/state/{stateId}:
+    get:
+      operationId: getStateVersion
+      summary: Get state version
+      tags: [state]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: stateId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: State version details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StateVersion"
+
+  /workspaces/{workspaceId}/state/{stateId}/download:
+    get:
+      operationId: downloadStateVersion
+      summary: Download raw state file
+      tags: [state]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: stateId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: State file download
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /workspaces/{workspaceId}/access:
+    get:
+      operationId: listWorkspaceAccess
+      summary: List workspace team access
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: List of team access entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkspaceTeamAccess"
+    post:
+      operationId: setWorkspaceAccess
+      summary: Set workspace team access (admin only)
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [team_id, role]
+              properties:
+                team_id:
+                  type: string
+                role:
+                  type: string
+      responses:
+        "201":
+          description: Access set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceTeamAccess"
+
+  /workspaces/{workspaceId}/access/{teamId}:
+    delete:
+      operationId: removeWorkspaceAccess
+      summary: Revoke workspace team access (admin only)
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/TeamId"
+      responses:
+        "204":
+          description: Revoked
+
+  /workspaces/{workspaceId}/runs:
+    get:
+      operationId: listRuns
+      summary: List runs for a workspace
+      tags: [runs]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: List of runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunList"
+    post:
+      operationId: createRun
+      summary: Create a new run
+      description: Creates a run. Returns 409 if workspace is locked.
+      tags: [runs]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRunRequest"
+      responses:
+        "201":
+          description: Created run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+        "409":
+          description: Workspace is locked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /workspaces/{workspaceId}/runs/{runId}:
+    get:
+      operationId: getRun
+      summary: Get run details
+      tags: [runs]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "200":
+          description: Run details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+
+  /workspaces/{workspaceId}/runs/{runId}/cancel:
+    post:
+      operationId: cancelRun
+      summary: Cancel a run (operator+)
+      description: Cancels a run in a cancellable state (pending, queued, planning, applying, awaiting_approval).
+      tags: [runs]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "200":
+          description: Cancelled run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+        "409":
+          description: Run cannot be cancelled in current state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /workspaces/{workspaceId}/runs/{runId}/logs/ws:
+    get:
+      operationId: streamRunLogs
+      summary: Stream run logs via WebSocket
+      tags: [runs]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "101":
+          description: WebSocket upgrade
+
+  /workspaces/{workspaceId}/runs/{runId}/approvals:
+    get:
+      operationId: listApprovals
+      summary: List approvals for a run
+      tags: [approvals]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "200":
+          description: List of approvals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Approval"
+    post:
+      operationId: createApproval
+      summary: Approve or reject a run
+      tags: [approvals]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/RunId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalRequest"
+      responses:
+        "201":
+          description: Approval created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Approval"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    WorkspaceId:
+      name: workspaceId
+      in: path
+      required: true
+      schema:
+        type: string
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema:
+        type: string
+    TeamId:
+      name: teamId
+      in: path
+      required: true
+      schema:
+        type: string
+    VariableId:
+      name: variableId
+      in: path
+      required: true
+      schema:
+        type: string
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        default: 1
+    PerPage:
+      name: per_page
+      in: query
+      schema:
+        type: integer
+        default: 20
+
+  responses:
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+
+    User:
+      type: object
+      required: [id, org_id, email, name, role, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        org_id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        avatar_url:
+          type: string
+        role:
+          type: string
+          enum: [owner, admin, operator, viewer]
+        last_login_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Workspace:
+      type: object
+      required: [id, org_id, name, repo_url, repo_branch, working_dir, tofu_version, environment, auto_apply, requires_approval, vcs_trigger_enabled, locked, created_by, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        org_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        repo_url:
+          type: string
+        repo_branch:
+          type: string
+        working_dir:
+          type: string
+        tofu_version:
+          type: string
+        environment:
+          type: string
+          enum: [development, staging, production]
+        auto_apply:
+          type: boolean
+        requires_approval:
+          type: boolean
+        vcs_trigger_enabled:
+          type: boolean
+        locked:
+          type: boolean
+        locked_by:
+          type: string
+          nullable: true
+        current_run_id:
+          type: string
+          nullable: true
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    WorkspaceList:
+      type: object
+      required: [data, total, page, per_page]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Workspace"
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
+
+    CreateWorkspaceRequest:
+      type: object
+      required: [name, repo_url]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        repo_url:
+          type: string
+        repo_branch:
+          type: string
+          default: main
+        working_dir:
+          type: string
+          default: "."
+        tofu_version:
+          type: string
+          default: "1.11.0"
+        environment:
+          type: string
+          enum: [development, staging, production]
+          default: development
+        auto_apply:
+          type: boolean
+          default: false
+        requires_approval:
+          type: boolean
+          default: false
+        vcs_trigger_enabled:
+          type: boolean
+          default: false
+
+    UpdateWorkspaceRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        repo_url:
+          type: string
+        repo_branch:
+          type: string
+        working_dir:
+          type: string
+        tofu_version:
+          type: string
+        environment:
+          type: string
+          enum: [development, staging, production]
+        auto_apply:
+          type: boolean
+        requires_approval:
+          type: boolean
+        vcs_trigger_enabled:
+          type: boolean
+
+    Run:
+      type: object
+      required: [id, workspace_id, org_id, operation, status, created_by, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        workspace_id:
+          type: string
+        org_id:
+          type: string
+        operation:
+          type: string
+          enum: [plan, apply, destroy]
+        status:
+          type: string
+          enum: [pending, queued, planning, planned, awaiting_approval, applying, applied, errored, cancelled, discarded]
+        plan_output:
+          type: string
+        plan_log_url:
+          type: string
+        apply_log_url:
+          type: string
+        resources_added:
+          type: integer
+        resources_changed:
+          type: integer
+        resources_deleted:
+          type: integer
+        error_message:
+          type: string
+        commit_sha:
+          type: string
+        created_by:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    RunList:
+      type: object
+      required: [data, total, page, per_page]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Run"
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
+
+    CreateRunRequest:
+      type: object
+      properties:
+        operation:
+          type: string
+          enum: [plan, apply, destroy]
+          default: plan
+
+    WorkspaceVariable:
+      type: object
+      required: [id, workspace_id, org_id, key, value, sensitive, category, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        workspace_id:
+          type: string
+        org_id:
+          type: string
+        key:
+          type: string
+        value:
+          type: string
+        sensitive:
+          type: boolean
+        category:
+          type: string
+          enum: [terraform, env]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DiscoveredVariable:
+      type: object
+      required: [name, required, configured]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        description:
+          type: string
+        default:
+          type: string
+        required:
+          type: boolean
+        configured:
+          type: boolean
+
+    CreateVariableRequest:
+      type: object
+      required: [key, value, sensitive, category]
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+        sensitive:
+          type: boolean
+        category:
+          type: string
+          enum: [terraform, env]
+
+    StateVersion:
+      type: object
+      required: [id, workspace_id, org_id, run_id, serial, state_url, resource_count, created_at]
+      properties:
+        id:
+          type: string
+        workspace_id:
+          type: string
+        org_id:
+          type: string
+        run_id:
+          type: string
+        serial:
+          type: integer
+        state_url:
+          type: string
+        resource_count:
+          type: integer
+        resource_summary:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    Team:
+      type: object
+      required: [id, org_id, name, slug, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        org_id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    TeamMember:
+      type: object
+      required: [id, team_id, user_id, role, created_at]
+      properties:
+        id:
+          type: string
+        team_id:
+          type: string
+        user_id:
+          type: string
+        role:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        email:
+          type: string
+        user_name:
+          type: string
+        avatar_url:
+          type: string
+
+    WorkspaceTeamAccess:
+      type: object
+      required: [id, workspace_id, team_id, role, created_at]
+      properties:
+        id:
+          type: string
+        workspace_id:
+          type: string
+        team_id:
+          type: string
+        role:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        team_name:
+          type: string
+        team_slug:
+          type: string
+
+    Approval:
+      type: object
+      required: [id, run_id, org_id, user_id, status, comment, created_at]
+      properties:
+        id:
+          type: string
+        run_id:
+          type: string
+        org_id:
+          type: string
+        user_id:
+          type: string
+        status:
+          type: string
+          enum: [approved, rejected]
+        comment:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        user_name:
+          type: string
+        avatar_url:
+          type: string
+
+    ApprovalRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [approved, rejected]
+        comment:
+          type: string
+
+    AuditLog:
+      type: object
+      required: [id, org_id, user_id, action, entity_type, entity_id, created_at]
+      properties:
+        id:
+          type: string
+        org_id:
+          type: string
+        user_id:
+          type: string
+        action:
+          type: string
+        entity_type:
+          type: string
+        entity_id:
+          type: string
+        before_data: {}
+        after_data: {}
+        ip_address:
+          type: string
+        user_agent:
+          type: string
+        created_at:
+          type: string
+          format: date-time

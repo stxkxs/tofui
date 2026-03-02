@@ -1,0 +1,283 @@
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/api/client";
+import type { Team, TeamMember } from "@/api/types";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Spinner } from "@/components/ui/spinner";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { formatRelativeTime } from "@/lib/utils";
+import { Plus, Users, Trash2, ChevronRight, X } from "lucide-react";
+import { toast } from "sonner";
+
+export function TeamsPage() {
+  const queryClient = useQueryClient();
+  const [showCreate, setShowCreate] = useState(false);
+  const [teamName, setTeamName] = useState("");
+  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
+
+  const { data: teams, isLoading, isError } = useQuery({
+    queryKey: ["teams"],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/teams");
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST("/teams", {
+        body: { name: teamName },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teams"] });
+      setTeamName("");
+      setShowCreate(false);
+      toast.success("Team created");
+    },
+    onError: () => toast.error("Failed to create team"),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (teamId: string) => {
+      const { error } = await api.DELETE("/teams/{teamId}", {
+        params: { path: { teamId } },
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teams"] });
+      setSelectedTeam(null);
+      toast.success("Team deleted");
+    },
+    onError: () => toast.error("Failed to delete team"),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Spinner className="w-6 h-6" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="p-8 max-w-4xl">
+        <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-10 text-center">
+          <p className="text-sm text-destructive">Failed to load teams. Please try again.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-8 max-w-4xl">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Teams</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Manage team membership and workspace access.
+          </p>
+        </div>
+        <Button onClick={() => setShowCreate(true)}>
+          <Plus className="w-4 h-4" />
+          Create team
+        </Button>
+      </div>
+
+      {/* Create team dialog */}
+      <Dialog open={showCreate} onClose={() => setShowCreate(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create team</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Input
+              placeholder="Team name"
+              value={teamName}
+              onChange={(e) => setTeamName(e.target.value)}
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setShowCreate(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={() => createMutation.mutate()}
+                disabled={!teamName || createMutation.isPending}
+              >
+                {createMutation.isPending ? <Spinner /> : "Create"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Team detail dialog */}
+      {selectedTeam && (
+        <Dialog open={!!selectedTeam} onClose={() => setSelectedTeam(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{selectedTeam.name}</DialogTitle>
+            </DialogHeader>
+            <TeamDetail
+              team={selectedTeam}
+              onDelete={() => deleteMutation.mutate(selectedTeam.id)}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Teams list */}
+      {!teams?.length ? (
+        <div className="rounded-xl border border-dashed border-border p-10 text-center">
+          <Users className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+          <h3 className="font-medium mb-1">No teams yet</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            Create a team to organize workspace access.
+          </p>
+          <Button size="sm" onClick={() => setShowCreate(true)}>
+            <Plus className="w-3.5 h-3.5" />
+            Create team
+          </Button>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-border divide-y divide-border">
+          {(teams as Team[]).map((team) => (
+            <button
+              key={team.id}
+              onClick={() => setSelectedTeam(team)}
+              className="w-full flex items-center justify-between px-4 py-3 hover:bg-accent/50 transition-colors text-left cursor-pointer"
+            >
+              <div className="flex items-center gap-3">
+                <Users className="w-4 h-4 text-muted-foreground" />
+                <div>
+                  <div className="font-medium text-sm">{team.name}</div>
+                  <div className="text-xs text-muted-foreground">
+                    @{team.slug} &middot; Created{" "}
+                    {formatRelativeTime(team.created_at)}
+                  </div>
+                </div>
+              </div>
+              <ChevronRight className="w-4 h-4 text-muted-foreground" />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TeamDetail({
+  team,
+  onDelete,
+}: {
+  team: Team;
+  onDelete: () => void;
+}) {
+  const queryClient = useQueryClient();
+
+  const { data: members, isLoading } = useQuery({
+    queryKey: ["team-members", team.id],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/teams/{teamId}/members", {
+        params: { path: { teamId: team.id } },
+      });
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const removeMemberMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const { error } = await api.DELETE("/teams/{teamId}/members/{userId}", {
+        params: { path: { teamId: team.id, userId } },
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["team-members", team.id] });
+      toast.success("Member removed");
+    },
+    onError: () => toast.error("Failed to remove member"),
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Badge variant="outline">@{team.slug}</Badge>
+        <span>Created {formatRelativeTime(team.created_at)}</span>
+      </div>
+
+      <div>
+        <h4 className="text-sm font-medium mb-2">Members</h4>
+        {isLoading ? (
+          <Spinner className="w-4 h-4" />
+        ) : !members?.length ? (
+          <p className="text-sm text-muted-foreground">No members yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {(members as TeamMember[]).map((m) => (
+              <div
+                key={m.id}
+                className="flex items-center gap-3 p-2 rounded bg-accent/30"
+              >
+                {m.avatar_url ? (
+                  <img
+                    src={m.avatar_url}
+                    alt=""
+                    className="w-6 h-6 rounded-full"
+                  />
+                ) : (
+                  <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-xs">
+                    {(m.user_name || m.email || "?")[0]}
+                  </div>
+                )}
+                <div className="flex-1">
+                  <div className="text-sm font-medium">
+                    {m.user_name || m.email}
+                  </div>
+                  <div className="text-xs text-muted-foreground">{m.email}</div>
+                </div>
+                <Badge variant="outline" className="text-xs">
+                  {m.role}
+                </Badge>
+                <button
+                  onClick={() => removeMemberMutation.mutate(m.user_id)}
+                  disabled={removeMemberMutation.isPending}
+                  className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+                  aria-label={`Remove ${m.user_name || m.email}`}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="pt-2 border-t border-border">
+        <Button
+          size="sm"
+          variant="outline"
+          className="text-destructive hover:bg-destructive/10"
+          onClick={onDelete}
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+          Delete team
+        </Button>
+      </div>
+    </div>
+  );
+}

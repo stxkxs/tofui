@@ -1,0 +1,9 @@
+.git
+.github
+.claude
+*.md
+LICENSE
+deploy/
+web/node_modules
+web/dist
+**/*_test.go

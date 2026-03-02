@@ -1,0 +1,188 @@
+version: "3"
+
+vars:
+  DATABASE_URL: "postgres://tofui:tofui@localhost:5432/tofui?sslmode=disable"
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  # === Development ===
+
+  dev:
+    desc: Run all services for local development
+    deps: [dev:server, dev:worker, dev:web]
+
+  dev:server:
+    desc: Run API server with hot reload
+    env:
+      DATABASE_URL: "{{.DATABASE_URL}}"
+    cmds:
+      - go run ./cmd/server
+
+  dev:worker:
+    desc: Run worker with hot reload
+    env:
+      DATABASE_URL: "{{.DATABASE_URL}}"
+    cmds:
+      - go run ./cmd/worker
+
+  dev:web:
+    desc: Run Vite dev server
+    dir: web
+    cmds:
+      - npm run dev
+
+  # === Database ===
+
+  db:up:
+    desc: Start PostgreSQL (Docker)
+    cmds:
+      - docker run -d --name tofui-postgres -p 5432:5432 -e POSTGRES_USER=tofui -e POSTGRES_PASSWORD=tofui -e POSTGRES_DB=tofui postgres:16-alpine 2>/dev/null || docker start tofui-postgres
+
+  db:down:
+    desc: Stop PostgreSQL
+    cmds:
+      - docker stop tofui-postgres
+
+  db:migrate:
+    desc: Run database migrations
+    env:
+      DATABASE_URL: "{{.DATABASE_URL}}"
+    cmds:
+      - go run ./cmd/migrate -direction up
+
+  db:migrate:down:
+    desc: Rollback last migration
+    env:
+      DATABASE_URL: "{{.DATABASE_URL}}"
+    cmds:
+      - go run ./cmd/migrate -direction down -steps 1
+
+  db:reset:
+    desc: Reset database (drop and recreate)
+    cmds:
+      - docker exec tofui-postgres psql -U tofui -c "DROP DATABASE IF EXISTS tofui; CREATE DATABASE tofui;"
+      - task: db:migrate
+
+  # === Redis ===
+
+  redis:up:
+    desc: Start Redis (Docker)
+    cmds:
+      - docker run -d --name tofui-redis -p 6379:6379 redis:7-alpine 2>/dev/null || docker start tofui-redis
+
+  # === MinIO ===
+
+  minio:up:
+    desc: Start MinIO (Docker)
+    cmds:
+      - docker run -d --name tofui-minio -p 9000:9000 -p 9001:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio server /data --console-address ":9001" 2>/dev/null || docker start tofui-minio
+
+  # === Infrastructure ===
+
+  infra:up:
+    desc: Start all infrastructure (Postgres, Redis, MinIO)
+    cmds:
+      - task: db:up
+      - task: redis:up
+      - task: minio:up
+
+  infra:down:
+    desc: Stop all infrastructure
+    cmds:
+      - docker stop tofui-postgres tofui-redis tofui-minio 2>/dev/null || true
+
+  # === Code Generation ===
+
+  generate:
+    desc: Run all code generation
+    cmds:
+      - task: generate:sqlc
+      - task: generate:openapi
+
+  generate:sqlc:
+    desc: Generate Go code from SQL queries
+    cmds:
+      - sqlc generate
+
+  generate:openapi:
+    desc: Generate TypeScript types from OpenAPI spec
+    dir: web
+    cmds:
+      - npx openapi-typescript ../api/openapi/v1.yaml -o src/api/generated.ts
+
+  # === Build ===
+
+  build:
+    desc: Build all binaries
+    cmds:
+      - go build ./cmd/server
+      - go build ./cmd/worker
+      - go build ./cmd/migrate
+
+  build:web:
+    desc: Build frontend for production
+    dir: web
+    cmds:
+      - npm run build
+
+  # === Docker ===
+
+  docker:build:
+    desc: Build all Docker images
+    cmds:
+      - docker build -f docker/Dockerfile.server -t tofui/server:latest .
+      - docker build -f docker/Dockerfile.worker -t tofui/worker:latest .
+      - docker build -f docker/Dockerfile.web -t tofui/web:latest .
+      - docker build -f docker/Dockerfile.migrate -t tofui/migrate:latest .
+
+  # === Helm ===
+
+  helm:install:
+    desc: Install Helm chart on local cluster
+    cmds:
+      - helm install tofui deploy/helm/tofui
+
+  helm:upgrade:
+    desc: Upgrade Helm chart
+    cmds:
+      - helm upgrade tofui deploy/helm/tofui
+
+  helm:uninstall:
+    desc: Uninstall Helm chart
+    cmds:
+      - helm uninstall tofui
+
+  # === Quality ===
+
+  lint:
+    desc: Run linters
+    cmds:
+      - go vet ./...
+      - cd web && npx tsc --noEmit
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test ./...
+
+  fmt:
+    desc: Format code
+    cmds:
+      - gofmt -w .
+
+  # === Setup ===
+
+  setup:
+    desc: Initial project setup
+    cmds:
+      - go mod download
+      - cd web && npm install
+      - task: infra:up
+      - echo "Waiting for Postgres to start..."
+      - sleep 3
+      - task: db:migrate
+      - echo "Setup complete! Run 'task dev' to start development."

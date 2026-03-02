@@ -1,0 +1,34 @@
+# Go binaries
+/tofui-server
+/tofui-worker
+/tofui-migrate
+/server
+/worker
+/migrate
+*.exe
+*.test
+*.out
+
+# Frontend
+web/node_modules/
+web/dist/
+web/.vite/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Docker
+docker-compose.override.yml

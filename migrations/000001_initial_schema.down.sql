@@ -1,0 +1,13 @@
+DROP TRIGGER IF EXISTS audit_logs_no_update ON audit_logs;
+DROP FUNCTION IF EXISTS prevent_audit_log_modification();
+DROP TABLE IF EXISTS workspace_variables;
+DROP TABLE IF EXISTS audit_logs;
+DROP TABLE IF EXISTS state_versions;
+ALTER TABLE workspaces DROP CONSTRAINT IF EXISTS fk_workspaces_current_run;
+DROP TABLE IF EXISTS runs;
+DROP TABLE IF EXISTS workspaces;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS organizations;
+DROP TYPE IF EXISTS user_role;
+DROP TYPE IF EXISTS run_operation;
+DROP TYPE IF EXISTS run_status;
