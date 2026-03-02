@@ -1,0 +1,20 @@
+apiVersion: v2
+name: tofui
+description: OpenTofu Lifecycle Management UI
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+
+dependencies:
+  - name: postgresql
+    version: "16.4.5"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
+    condition: postgresql.enabled
+  - name: redis
+    version: "20.6.2"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
+    condition: redis.enabled
+  - name: minio
+    version: "14.8.7"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
+    condition: minio.enabled

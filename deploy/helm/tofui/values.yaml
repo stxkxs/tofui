@@ -1,0 +1,104 @@
+replicaCount:
+  server: 1
+  worker: 1
+  web: 1
+
+image:
+  server:
+    repository: tofui/server
+    tag: latest
+    pullPolicy: IfNotPresent
+  worker:
+    repository: tofui/worker
+    tag: latest
+    pullPolicy: IfNotPresent
+  web:
+    repository: tofui/web
+    tag: latest
+    pullPolicy: IfNotPresent
+  migrate:
+    repository: tofui/migrate
+    tag: latest
+    pullPolicy: IfNotPresent
+
+config:
+  serverAddr: ":8080"
+  serverBaseURL: "http://localhost:8080"
+  webURL: "http://localhost:5173"
+  environment: "development"
+  jwtSecret: "dev-secret-change-in-production"
+  encryptionKey: "dev-encryption-key-32bytes!!!!!!"
+  executorType: "local"
+  workerConcurrency: "10"
+  githubClientID: ""
+  githubClientSecret: ""
+  webhookSecret: ""
+  s3Region: "us-east-1"
+  jwtExpiration: "24h"
+  shutdownTimeout: "15s"
+  executorNamespace: "tofui"
+  executorImage: "tofui-executor:tofu-1.11"
+  workerHealthAddr: ":8081"
+  logLevel: "info"
+  dbMaxConns: "25"
+  dbMinConns: "5"
+
+postgresql:
+  enabled: true
+  auth:
+    username: tofui
+    password: tofui
+    database: tofui
+  primary:
+    persistence:
+      size: 1Gi
+
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    persistence:
+      size: 256Mi
+
+minio:
+  enabled: true
+  auth:
+    rootUser: minioadmin
+    rootPassword: minioadmin
+  defaultBuckets: tofui
+  persistence:
+    size: 1Gi
+
+ingress:
+  enabled: false
+  className: nginx
+  hosts:
+    - host: tofui.local
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  server:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  worker:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+  web:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi

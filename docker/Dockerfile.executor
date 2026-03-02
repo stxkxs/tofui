@@ -1,0 +1,25 @@
+FROM alpine:3.20
+
+ARG TOFU_VERSION=1.11.0
+
+RUN apk add --no-cache \
+    ca-certificates \
+    git \
+    curl \
+    unzip \
+    bash
+
+# Install OpenTofu
+RUN curl -fsSL "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.zip" \
+    -o /tmp/tofu.zip && \
+    unzip /tmp/tofu.zip -d /usr/local/bin && \
+    rm /tmp/tofu.zip && \
+    chmod +x /usr/local/bin/tofu && \
+    tofu version
+
+# Create non-root user
+RUN addgroup -S tofu && adduser -S tofu -G tofu
+USER tofu
+WORKDIR /work
+
+ENTRYPOINT ["/bin/sh"]
