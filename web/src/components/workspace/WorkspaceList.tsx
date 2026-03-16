@@ -16,6 +16,7 @@ import {
   Plus,
   GitBranch,
   FolderGit2,
+  Upload,
   Clock,
   Lock,
   Zap,
@@ -193,9 +194,15 @@ export function WorkspaceList() {
                       <p className="text-sm text-muted-foreground mb-3 line-clamp-1">{workspace.description}</p>
                     )}
                     <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1.5">
-                        <GitBranch className="w-3.5 h-3.5" />{workspace.repo_branch}
-                      </span>
+                      {workspace.source === "upload" ? (
+                        <span className="flex items-center gap-1.5">
+                          <Upload className="w-3.5 h-3.5" />Upload
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1.5">
+                          <GitBranch className="w-3.5 h-3.5" />{workspace.repo_branch}
+                        </span>
+                      )}
                       <span className="flex items-center gap-1.5">
                         <span className="font-mono">tofu {workspace.tofu_version}</span>
                       </span>

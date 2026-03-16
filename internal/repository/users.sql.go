@@ -58,6 +58,27 @@ func (q *Queries) UpsertUserByGitHubID(ctx context.Context, arg UpsertUserByGitH
 	return scanUser(row)
 }
 
+type UpsertUserByEmailParams struct {
+	ID        string `json:"id"`
+	OrgID     string `json:"org_id"`
+	Email     string `json:"email"`
+	Name      string `json:"name"`
+	AvatarURL string `json:"avatar_url"`
+	Role      string `json:"role"`
+}
+
+func (q *Queries) UpsertUserByEmail(ctx context.Context, arg UpsertUserByEmailParams) (User, error) {
+	row := q.db.QueryRow(ctx,
+		`INSERT INTO users (id, org_id, email, name, avatar_url, role)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (org_id, email) DO UPDATE
+		SET name = EXCLUDED.name, last_login_at = NOW(), updated_at = NOW()
+		RETURNING `+userColumns,
+		arg.ID, arg.OrgID, arg.Email, arg.Name, arg.AvatarURL, arg.Role,
+	)
+	return scanUser(row)
+}
+
 type CreateUserParams struct {
 	ID        string `json:"id"`
 	OrgID     string `json:"org_id"`

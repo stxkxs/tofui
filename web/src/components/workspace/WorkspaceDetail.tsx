@@ -13,10 +13,12 @@ import { AccessPanel } from "@/components/workspace/AccessPanel";
 import { WorkspaceSettings } from "@/components/workspace/WorkspaceSettings";
 import { Pagination } from "@/components/ui/pagination";
 import { formatRelativeTime, formatDuration, getEnvironmentColor } from "@/lib/utils";
+import { ConfigUpload } from "@/components/workspace/ConfigUpload";
 import {
   Play,
   ArrowLeft,
   GitBranch,
+  Upload,
   Clock,
   Timer,
   Settings,
@@ -217,10 +219,17 @@ export function WorkspaceDetail({ workspaceId }: Props) {
               <p className="text-muted-foreground">{workspace.description}</p>
             )}
             <div className="flex items-center gap-4 mt-3 text-sm text-muted-foreground">
-              <span className="flex items-center gap-1.5">
-                <GitBranch className="w-4 h-4" />
-                {workspace.repo_branch}
-              </span>
+              {workspace.source === "upload" ? (
+                <span className="flex items-center gap-1.5">
+                  <Upload className="w-4 h-4" />
+                  Upload
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5">
+                  <GitBranch className="w-4 h-4" />
+                  {workspace.repo_branch}
+                </span>
+              )}
               <span className="font-mono text-xs">
                 tofu {workspace.tofu_version}
               </span>
@@ -233,8 +242,18 @@ export function WorkspaceDetail({ workspaceId }: Props) {
           <div className="flex items-center gap-2">
             <Button
               onClick={() => createRunMutation.mutate("plan")}
-              disabled={createRunMutation.isPending || workspace.locked}
-              title={workspace.locked ? "Workspace is locked" : undefined}
+              disabled={
+                createRunMutation.isPending ||
+                workspace.locked ||
+                (workspace.source === "upload" && !workspace.current_config_version_id)
+              }
+              title={
+                workspace.locked
+                  ? "Workspace is locked"
+                  : workspace.source === "upload" && !workspace.current_config_version_id
+                    ? "Upload configuration first"
+                    : undefined
+              }
             >
               {createRunMutation.isPending ? (
                 <Spinner />
@@ -272,6 +291,15 @@ export function WorkspaceDetail({ workspaceId }: Props) {
       {/* Tab content */}
       {tab === "runs" && (
         <div>
+          {workspace.source === "upload" && (
+            <div className="mb-6">
+              <h3 className="text-sm font-medium mb-3">Configuration</h3>
+              <ConfigUpload
+                workspaceId={workspaceId}
+                currentConfigVersion={workspace.current_config_version_id}
+              />
+            </div>
+          )}
           {runsLoading ? (
             <div className="flex items-center justify-center py-12">
               <Spinner className="w-5 h-5" />

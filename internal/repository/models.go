@@ -31,24 +31,26 @@ type User struct {
 }
 
 type Workspace struct {
-	ID                 string    `json:"id"`
-	OrgID              string    `json:"org_id"`
-	Name               string    `json:"name"`
-	Description        string    `json:"description"`
-	RepoURL            string    `json:"repo_url"`
-	RepoBranch         string    `json:"repo_branch"`
-	WorkingDir         string    `json:"working_dir"`
-	TofuVersion        string    `json:"tofu_version"`
-	Environment        string    `json:"environment"`
-	AutoApply          bool      `json:"auto_apply"`
-	RequiresApproval   bool      `json:"requires_approval"`
-	VcsTriggerEnabled  bool      `json:"vcs_trigger_enabled"`
-	Locked             bool      `json:"locked"`
-	LockedBy           *string   `json:"locked_by"`
-	CurrentRunID       *string   `json:"current_run_id"`
-	CreatedBy          string    `json:"created_by"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ID                     string    `json:"id"`
+	OrgID                  string    `json:"org_id"`
+	Name                   string    `json:"name"`
+	Description            string    `json:"description"`
+	RepoURL                string    `json:"repo_url"`
+	RepoBranch             string    `json:"repo_branch"`
+	WorkingDir             string    `json:"working_dir"`
+	TofuVersion            string    `json:"tofu_version"`
+	Environment            string    `json:"environment"`
+	AutoApply              bool      `json:"auto_apply"`
+	RequiresApproval       bool      `json:"requires_approval"`
+	VcsTriggerEnabled      bool      `json:"vcs_trigger_enabled"`
+	Locked                 bool      `json:"locked"`
+	LockedBy               *string   `json:"locked_by"`
+	CurrentRunID           *string   `json:"current_run_id"`
+	CreatedBy              string    `json:"created_by"`
+	Source                 string    `json:"source"`
+	CurrentConfigVersionID string    `json:"current_config_version_id,omitempty"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 type WorkspaceSummary struct {

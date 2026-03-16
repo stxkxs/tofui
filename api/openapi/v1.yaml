@@ -450,6 +450,43 @@ paths:
               schema:
                 $ref: "#/components/schemas/Workspace"
 
+  /workspaces/{workspaceId}/upload:
+    post:
+      operationId: uploadConfiguration
+      summary: Upload configuration archive (operator+)
+      description: Uploads a .tar.gz archive of OpenTofu configuration files for workspaces with source "upload". Creates a new config version and returns the updated workspace.
+      tags: [workspaces]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Updated workspace with new config version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+        "400":
+          description: Invalid file or workspace source is not "upload"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /workspaces/{workspaceId}/variables:
     get:
       operationId: listVariables
@@ -947,7 +984,7 @@ components:
 
     Workspace:
       type: object
-      required: [id, org_id, name, repo_url, repo_branch, working_dir, tofu_version, environment, auto_apply, requires_approval, vcs_trigger_enabled, locked, created_by, created_at, updated_at]
+      required: [id, org_id, name, source, repo_url, repo_branch, working_dir, tofu_version, environment, auto_apply, requires_approval, vcs_trigger_enabled, locked, created_by, created_at, updated_at]
       properties:
         id:
           type: string
@@ -957,6 +994,13 @@ components:
           type: string
         description:
           type: string
+        source:
+          type: string
+          enum: [vcs, upload]
+          default: vcs
+        current_config_version_id:
+          type: string
+          nullable: true
         repo_url:
           type: string
         repo_branch:
@@ -1008,12 +1052,16 @@ components:
 
     CreateWorkspaceRequest:
       type: object
-      required: [name, repo_url]
+      required: [name]
       properties:
         name:
           type: string
         description:
           type: string
+        source:
+          type: string
+          enum: [vcs, upload]
+          default: vcs
         repo_url:
           type: string
         repo_branch:

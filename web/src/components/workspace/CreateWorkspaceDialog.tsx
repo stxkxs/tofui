@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -13,12 +14,25 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import { GitBranch, Upload } from "lucide-react";
 
-const schema = z.object({
+const vcsSchema = z.object({
+  source: z.literal("vcs"),
   name: z.string().min(1, "Name is required").max(64),
   description: z.string().max(256).optional(),
   repo_url: z.string().url("Must be a valid URL"),
   repo_branch: z.string().default("main"),
+  working_dir: z.string().default("."),
+  tofu_version: z.string().default("1.11.0"),
+  environment: z.enum(["development", "staging", "production"]).default("development"),
+  auto_apply: z.boolean().default(false),
+  requires_approval: z.boolean().default(false),
+});
+
+const uploadSchema = z.object({
+  source: z.literal("upload"),
+  name: z.string().min(1, "Name is required").max(64),
+  description: z.string().max(256).optional(),
   working_dir: z.string().default("."),
   tofu_version: z.string().default("1.11.0"),
   environment: z.enum(["development", "staging", "production"]).default("development"),
@@ -39,6 +53,10 @@ export function CreateWorkspaceDialog({
   onSubmit,
   isLoading,
 }: Props) {
+  const [source, setSource] = useState<"vcs" | "upload">("vcs");
+
+  const schema = source === "vcs" ? vcsSchema : uploadSchema;
+
   const {
     register,
     handleSubmit,
@@ -47,6 +65,7 @@ export function CreateWorkspaceDialog({
   } = useForm<CreateWorkspaceRequest>({
     resolver: zodResolver(schema),
     defaultValues: {
+      source,
       repo_branch: "main",
       working_dir: ".",
       tofu_version: "1.11.0",
@@ -58,7 +77,21 @@ export function CreateWorkspaceDialog({
 
   const handleClose = () => {
     reset();
+    setSource("vcs");
     onClose();
+  };
+
+  const handleSourceChange = (s: "vcs" | "upload") => {
+    setSource(s);
+    reset({
+      source: s,
+      repo_branch: "main",
+      working_dir: ".",
+      tofu_version: "1.11.0",
+      environment: "development",
+      auto_apply: false,
+      requires_approval: false,
+    });
   };
 
   return (
@@ -67,14 +100,44 @@ export function CreateWorkspaceDialog({
         <DialogHeader>
           <DialogTitle>Create workspace</DialogTitle>
           <DialogDescription>
-            Connect a Git repository to manage OpenTofu infrastructure.
+            {source === "vcs"
+              ? "Connect a Git repository to manage OpenTofu infrastructure."
+              : "Upload .tf files to manage OpenTofu infrastructure."}
           </DialogDescription>
         </DialogHeader>
 
         <form
-          onSubmit={handleSubmit(onSubmit)}
+          onSubmit={handleSubmit((data) => onSubmit({ ...data, source }))}
           className="space-y-4"
         >
+          {/* Source toggle */}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => handleSourceChange("vcs")}
+              className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border text-sm font-medium transition-all cursor-pointer ${
+                source === "vcs"
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:border-primary/30"
+              }`}
+            >
+              <GitBranch className="w-4 h-4" />
+              VCS (Git)
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSourceChange("upload")}
+              className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border text-sm font-medium transition-all cursor-pointer ${
+                source === "upload"
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:border-primary/30"
+              }`}
+            >
+              <Upload className="w-4 h-4" />
+              Upload
+            </button>
+          </div>
+
           <div>
             <label className="block text-sm font-medium mb-1.5">Name</label>
             <Input
@@ -99,35 +162,51 @@ export function CreateWorkspaceDialog({
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-1.5">
-              Repository URL
-            </label>
-            <Input
-              {...register("repo_url")}
-              placeholder="https://github.com/org/repo"
-            />
-            {errors.repo_url && (
-              <p className="text-xs text-destructive mt-1">
-                {errors.repo_url.message}
-              </p>
-            )}
-          </div>
+          {source === "vcs" && (
+            <>
+              <div>
+                <label className="block text-sm font-medium mb-1.5">
+                  Repository URL
+                </label>
+                <Input
+                  {...register("repo_url")}
+                  placeholder="https://github.com/org/repo"
+                />
+                {errors.repo_url && (
+                  <p className="text-xs text-destructive mt-1">
+                    {errors.repo_url.message}
+                  </p>
+                )}
+              </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium mb-1.5">
-                Branch
-              </label>
-              <Input {...register("repo_branch")} placeholder="main" />
-            </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium mb-1.5">
+                    Branch
+                  </label>
+                  <Input {...register("repo_branch")} placeholder="main" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1.5">
+                    Working directory
+                  </label>
+                  <Input {...register("working_dir")} placeholder="." />
+                </div>
+              </div>
+            </>
+          )}
+
+          {source === "upload" && (
             <div>
               <label className="block text-sm font-medium mb-1.5">
                 Working directory
               </label>
               <Input {...register("working_dir")} placeholder="." />
+              <p className="text-xs text-muted-foreground mt-1">
+                Subdirectory within the uploaded archive to run tofu in.
+              </p>
             </div>
-          </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -180,6 +259,15 @@ export function CreateWorkspaceDialog({
               </div>
             </label>
           </div>
+
+          {source === "upload" && (
+            <div className="rounded-lg border border-border bg-accent/30 p-3">
+              <p className="text-xs text-muted-foreground">
+                After creating the workspace, upload a <code className="text-xs">.tar.gz</code> archive
+                of your .tf files from the workspace detail page.
+              </p>
+            </div>
+          )}
 
           <div className="flex justify-end gap-2 pt-2">
             <Button

@@ -129,6 +129,18 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 		}
 	}
 
+	// Download config archive for upload workspaces
+	var archiveData []byte
+	if workspace.Source == "upload" && workspace.CurrentConfigVersionID != "" && w.storage != nil {
+		key := fmt.Sprintf("configs/%s/%s.tar.gz", args.WorkspaceID, workspace.CurrentConfigVersionID)
+		data, err := w.storage.GetConfigArchive(ctx, key)
+		if err != nil {
+			return w.failRun(ctx, args, logger, fmt.Errorf("failed to download config archive: %w", err), "")
+		}
+		archiveData = data
+		logger.Info("downloaded config archive", "config_version", workspace.CurrentConfigVersionID, "size", len(data))
+	}
+
 	// Derive state encryption passphrase if encryption is configured
 	var stateEncPassphrase string
 	if w.encryptor != nil {
@@ -155,6 +167,8 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 		LogCallback:               logCallback,
 		PreviousState:             previousState,
 		StateEncryptionPassphrase: stateEncPassphrase,
+		Source:                    workspace.Source,
+		ArchiveData:               archiveData,
 	})
 
 	if err != nil {

@@ -18,6 +18,7 @@ export interface Workspace {
   org_id: string;
   name: string;
   description?: string;
+  source: "vcs" | "upload";
   repo_url: string;
   repo_branch: string;
   working_dir: string;
@@ -29,6 +30,7 @@ export interface Workspace {
   locked: boolean;
   locked_by?: string | null;
   current_run_id?: string | null;
+  current_config_version_id?: string;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -210,7 +212,8 @@ export interface ListResponse<T> {
 export interface CreateWorkspaceRequest {
   name: string;
   description?: string;
-  repo_url: string;
+  source?: "vcs" | "upload";
+  repo_url?: string;
   repo_branch?: string;
   working_dir?: string;
   tofu_version?: string;
@@ -400,6 +403,15 @@ export interface paths {
       parameters: { path: { workspaceId: string } };
       responses: {
         204: { content: never };
+      };
+    };
+  };
+  "/workspaces/{workspaceId}/upload": {
+    post: {
+      parameters: { path: { workspaceId: string } };
+      // Note: multipart/form-data, handled via fetch directly
+      responses: {
+        200: { content: { "application/json": Workspace } };
       };
     };
   };

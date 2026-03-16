@@ -1,4 +1,4 @@
--- Tofui initial schema
+-- Tofui schema
 -- Uses ULIDs for sortable unique IDs, stored as TEXT
 
 -- Custom types
@@ -60,25 +60,31 @@ CREATE INDEX idx_users_email ON users(email);
 
 -- Workspaces
 CREATE TABLE workspaces (
-    id                TEXT PRIMARY KEY,
-    org_id            TEXT NOT NULL REFERENCES organizations(id),
-    name              TEXT NOT NULL,
-    description       TEXT NOT NULL DEFAULT '',
-    repo_url          TEXT NOT NULL,
-    repo_branch       TEXT NOT NULL DEFAULT 'main',
-    terraform_dir     TEXT NOT NULL DEFAULT '.',
-    terraform_version TEXT NOT NULL DEFAULT '1.9.0',
-    environment       TEXT NOT NULL DEFAULT 'development',
-    locked            BOOLEAN NOT NULL DEFAULT FALSE,
-    locked_by         TEXT REFERENCES users(id),
-    current_run_id    TEXT, -- forward reference, set after runs table exists
-    created_by        TEXT NOT NULL REFERENCES users(id),
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    id                        TEXT PRIMARY KEY,
+    org_id                    TEXT NOT NULL REFERENCES organizations(id),
+    name                      TEXT NOT NULL,
+    description               TEXT NOT NULL DEFAULT '',
+    source                    TEXT NOT NULL DEFAULT 'vcs',
+    repo_url                  TEXT NOT NULL DEFAULT '',
+    repo_branch               TEXT NOT NULL DEFAULT 'main',
+    working_dir               TEXT NOT NULL DEFAULT '.',
+    tofu_version              TEXT NOT NULL DEFAULT '1.11.0',
+    environment               TEXT NOT NULL DEFAULT 'development',
+    auto_apply                BOOLEAN NOT NULL DEFAULT FALSE,
+    requires_approval         BOOLEAN NOT NULL DEFAULT FALSE,
+    vcs_trigger_enabled       BOOLEAN NOT NULL DEFAULT FALSE,
+    locked                    BOOLEAN NOT NULL DEFAULT FALSE,
+    locked_by                 TEXT REFERENCES users(id),
+    current_run_id            TEXT,
+    current_config_version_id TEXT NOT NULL DEFAULT '',
+    created_by                TEXT NOT NULL REFERENCES users(id),
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(org_id, name)
 );
 
 CREATE INDEX idx_workspaces_org_id ON workspaces(org_id);
+CREATE INDEX idx_workspaces_vcs_trigger ON workspaces(repo_url, repo_branch) WHERE vcs_trigger_enabled = TRUE;
 
 -- Runs
 CREATE TABLE runs (
@@ -90,10 +96,12 @@ CREATE TABLE runs (
     plan_output        TEXT NOT NULL DEFAULT '',
     plan_log_url       TEXT NOT NULL DEFAULT '',
     apply_log_url      TEXT NOT NULL DEFAULT '',
+    plan_json_url      TEXT NOT NULL DEFAULT '',
     resources_added    INT NOT NULL DEFAULT 0,
     resources_changed  INT NOT NULL DEFAULT 0,
     resources_deleted  INT NOT NULL DEFAULT 0,
     error_message      TEXT NOT NULL DEFAULT '',
+    commit_sha         TEXT NOT NULL DEFAULT '',
     created_by         TEXT NOT NULL REFERENCES users(id),
     started_at         TIMESTAMPTZ,
     finished_at        TIMESTAMPTZ,
@@ -105,6 +113,7 @@ CREATE INDEX idx_runs_workspace_id ON runs(workspace_id);
 CREATE INDEX idx_runs_org_id ON runs(org_id);
 CREATE INDEX idx_runs_status ON runs(status);
 CREATE INDEX idx_runs_workspace_status ON runs(workspace_id, status);
+CREATE INDEX idx_runs_workspace_commit ON runs(workspace_id, commit_sha) WHERE commit_sha != '';
 
 -- Add foreign key for current_run_id now that runs exists
 ALTER TABLE workspaces ADD CONSTRAINT fk_workspaces_current_run FOREIGN KEY (current_run_id) REFERENCES runs(id);
@@ -125,6 +134,57 @@ CREATE TABLE state_versions (
 
 CREATE INDEX idx_state_versions_workspace_id ON state_versions(workspace_id);
 
+-- Teams
+CREATE TABLE teams (
+    id         TEXT PRIMARY KEY,
+    org_id     TEXT NOT NULL REFERENCES organizations(id),
+    name       TEXT NOT NULL,
+    slug       TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(org_id, slug)
+);
+
+CREATE INDEX idx_teams_org_id ON teams(org_id);
+
+-- Team memberships
+CREATE TABLE team_members (
+    id         TEXT PRIMARY KEY,
+    team_id    TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role       user_role NOT NULL DEFAULT 'viewer',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(team_id, user_id)
+);
+
+CREATE INDEX idx_team_members_team_id ON team_members(team_id);
+CREATE INDEX idx_team_members_user_id ON team_members(user_id);
+
+-- Workspace team permissions
+CREATE TABLE workspace_team_access (
+    id           TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    team_id      TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    role         user_role NOT NULL DEFAULT 'viewer',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(workspace_id, team_id)
+);
+
+CREATE INDEX idx_workspace_team_access_workspace_id ON workspace_team_access(workspace_id);
+
+-- Run approvals
+CREATE TABLE approvals (
+    id         TEXT PRIMARY KEY,
+    run_id     TEXT NOT NULL REFERENCES runs(id),
+    org_id     TEXT NOT NULL REFERENCES organizations(id),
+    user_id    TEXT NOT NULL REFERENCES users(id),
+    status     TEXT NOT NULL DEFAULT 'pending',
+    comment    TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_approvals_run_id ON approvals(run_id);
+
 -- Audit logs (append-only, immutable)
 CREATE TABLE audit_logs (
     id          TEXT PRIMARY KEY,
@@ -144,7 +204,6 @@ CREATE INDEX idx_audit_logs_org_id ON audit_logs(org_id);
 CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
 CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at);
 
--- Prevent updates and deletes on audit_logs
 CREATE OR REPLACE FUNCTION prevent_audit_log_modification()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -156,7 +215,7 @@ CREATE TRIGGER audit_logs_no_update
     BEFORE UPDATE OR DELETE ON audit_logs
     FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_modification();
 
--- Workspace variables (for Phase 2, included in schema for completeness)
+-- Workspace variables
 CREATE TABLE workspace_variables (
     id           TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -164,7 +223,8 @@ CREATE TABLE workspace_variables (
     key          TEXT NOT NULL,
     value        TEXT NOT NULL,
     sensitive    BOOLEAN NOT NULL DEFAULT FALSE,
-    category     TEXT NOT NULL DEFAULT 'terraform', -- 'terraform' or 'env'
+    category     TEXT NOT NULL DEFAULT 'terraform',
+    description  TEXT NOT NULL DEFAULT '',
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(workspace_id, key, category)

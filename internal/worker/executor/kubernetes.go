@@ -131,6 +131,13 @@ func (e *KubernetesExecutor) Execute(ctx context.Context, params ExecuteParams) 
 		Data: cmData,
 	}
 
+	// For upload workspaces, store the archive as binary data in the ConfigMap
+	if params.Source == "upload" && len(params.ArchiveData) > 0 {
+		cm.BinaryData = map[string][]byte{
+			"source.tar.gz": params.ArchiveData,
+		}
+	}
+
 	_, err := e.client.CoreV1().ConfigMaps(e.namespace).Create(ctx, cm, metav1.CreateOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create configmap: %w", err)
@@ -218,10 +225,17 @@ func (e *KubernetesExecutor) buildScript(params ExecuteParams) string {
 
 	sb.WriteString("#!/bin/sh\nset -e\n\n")
 
-	// Clone repo
-	sb.WriteString(fmt.Sprintf("echo 'Cloning %s (branch: %s)...'\n", params.RepoURL, params.RepoBranch))
-	sb.WriteString(fmt.Sprintf("git clone --depth 1 --branch %s %s /work\n", params.RepoBranch, params.RepoURL))
-	sb.WriteString(fmt.Sprintf("cd /work/%s\n\n", params.WorkingDir))
+	// Get source: clone repo or extract uploaded archive
+	if params.Source == "upload" {
+		sb.WriteString("echo 'Extracting uploaded configuration...'\n")
+		sb.WriteString("cd /work\n")
+		sb.WriteString("tar xzf /config/source.tar.gz\n")
+		sb.WriteString(fmt.Sprintf("cd /work/%s\n\n", params.WorkingDir))
+	} else {
+		sb.WriteString(fmt.Sprintf("echo 'Cloning %s (branch: %s)...'\n", params.RepoURL, params.RepoBranch))
+		sb.WriteString(fmt.Sprintf("git clone --depth 1 --branch %s %s /work\n", params.RepoBranch, params.RepoURL))
+		sb.WriteString(fmt.Sprintf("cd /work/%s\n\n", params.WorkingDir))
+	}
 
 	// Copy tfvars if present
 	sb.WriteString("if [ -f /config/tofui.auto.tfvars ]; then cp /config/tofui.auto.tfvars .; fi\n\n")

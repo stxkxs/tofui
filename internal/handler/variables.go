@@ -1,13 +1,19 @@
 package handler
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -18,6 +24,7 @@ import (
 	"github.com/stxkxs/tofui/internal/repository"
 	"github.com/stxkxs/tofui/internal/secrets"
 	"github.com/stxkxs/tofui/internal/service"
+	"github.com/stxkxs/tofui/internal/storage"
 	"github.com/stxkxs/tofui/internal/tfparse"
 )
 
@@ -26,10 +33,11 @@ type VariableHandler struct {
 	encryptor    *secrets.Encryptor
 	auditSvc     *service.AuditService
 	workspaceSvc *service.WorkspaceService
+	storage      *storage.S3Storage
 }
 
-func NewVariableHandler(queries *repository.Queries, encryptor *secrets.Encryptor, auditSvc *service.AuditService, workspaceSvc *service.WorkspaceService) *VariableHandler {
-	return &VariableHandler{queries: queries, encryptor: encryptor, auditSvc: auditSvc, workspaceSvc: workspaceSvc}
+func NewVariableHandler(queries *repository.Queries, encryptor *secrets.Encryptor, auditSvc *service.AuditService, workspaceSvc *service.WorkspaceService, store *storage.S3Storage) *VariableHandler {
+	return &VariableHandler{queries: queries, encryptor: encryptor, auditSvc: auditSvc, workspaceSvc: workspaceSvc, storage: store}
 }
 
 type CreateVariableRequest struct {
@@ -245,11 +253,6 @@ func (h *VariableHandler) Discover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ws.RepoURL == "" {
-		respond.Error(w, http.StatusBadRequest, "workspace has no repository URL configured")
-		return
-	}
-
 	tmpDir, err := os.MkdirTemp("", "tofui-discover-*")
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, "failed to create temp directory")
@@ -257,14 +260,40 @@ func (h *VariableHandler) Discover(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
+	if ws.Source == "upload" {
+		// Extract config archive from S3
+		if ws.CurrentConfigVersionID == "" {
+			respond.Error(w, http.StatusBadRequest, "no configuration uploaded yet")
+			return
+		}
+		if h.storage == nil {
+			respond.Error(w, http.StatusServiceUnavailable, "storage not configured")
+			return
+		}
+		key := fmt.Sprintf("configs/%s/%s.tar.gz", workspaceID, ws.CurrentConfigVersionID)
+		data, err := h.storage.GetConfigArchive(r.Context(), key)
+		if err != nil {
+			respond.Error(w, http.StatusInternalServerError, "failed to download configuration")
+			return
+		}
+		if err := extractDiscoverArchive(data, tmpDir); err != nil {
+			respond.Error(w, http.StatusInternalServerError, "failed to extract configuration")
+			return
+		}
+	} else {
+		if ws.RepoURL == "" {
+			respond.Error(w, http.StatusBadRequest, "workspace has no repository URL configured")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--branch", ws.RepoBranch, ws.RepoURL, tmpDir)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		slog.Error("git clone failed", "error", err, "output", string(output), "repo", ws.RepoURL)
-		respond.Error(w, http.StatusBadGateway, "failed to clone repository")
-		return
+		cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--branch", ws.RepoBranch, ws.RepoURL, tmpDir)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			slog.Error("git clone failed", "error", err, "output", string(output), "repo", ws.RepoURL)
+			respond.Error(w, http.StatusBadGateway, "failed to clone repository")
+			return
+		}
 	}
 
 	parseDir := tmpDir
@@ -304,6 +333,43 @@ func (h *VariableHandler) Discover(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond.JSON(w, http.StatusOK, result)
+}
+
+func extractDiscoverArchive(data []byte, destDir string) error {
+	gr, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("invalid gzip: %w", err)
+	}
+	defer gr.Close()
+
+	tr := tar.NewReader(gr)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		cleanName := filepath.Clean(hdr.Name)
+		if strings.HasPrefix(cleanName, "..") {
+			continue
+		}
+		target := filepath.Join(destDir, cleanName)
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			os.MkdirAll(target, 0755)
+		case tar.TypeReg:
+			os.MkdirAll(filepath.Dir(target), 0755)
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode))
+			if err != nil {
+				return err
+			}
+			io.Copy(f, tr)
+			f.Close()
+		}
+	}
+	return nil
 }
 
 type BulkCreateVariablesRequest struct {

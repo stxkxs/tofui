@@ -1,7 +1,10 @@
 package executor
 
 import (
+	"archive/tar"
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -34,15 +37,24 @@ func (e *LocalExecutor) Execute(ctx context.Context, params ExecuteParams) (*Exe
 
 	params.LogCallback([]byte(fmt.Sprintf("Preparing workspace for run %s...\r\n", params.RunID)))
 
-	// Clone repository
-	params.LogCallback([]byte(fmt.Sprintf("Cloning %s (branch: %s)...\r\n", params.RepoURL, params.RepoBranch)))
-	cloneCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--branch", params.RepoBranch, params.RepoURL, workDir)
-	cloneOutput, err := cloneCmd.CombinedOutput()
-	if err != nil {
-		params.LogCallback([]byte(fmt.Sprintf("\033[31mGit clone failed: %s\033[0m\r\n", string(cloneOutput))))
-		return nil, fmt.Errorf("git clone failed: %w", err)
+	// Get source code: clone repo or extract uploaded archive
+	if params.Source == "upload" {
+		params.LogCallback([]byte("Extracting uploaded configuration...\r\n"))
+		if err := extractArchive(params.ArchiveData, workDir); err != nil {
+			params.LogCallback([]byte(fmt.Sprintf("\033[31mArchive extraction failed: %s\033[0m\r\n", err)))
+			return nil, fmt.Errorf("archive extraction failed: %w", err)
+		}
+		params.LogCallback([]byte("Configuration extracted successfully.\r\n\r\n"))
+	} else {
+		params.LogCallback([]byte(fmt.Sprintf("Cloning %s (branch: %s)...\r\n", params.RepoURL, params.RepoBranch)))
+		cloneCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--branch", params.RepoBranch, params.RepoURL, workDir)
+		cloneOutput, err := cloneCmd.CombinedOutput()
+		if err != nil {
+			params.LogCallback([]byte(fmt.Sprintf("\033[31mGit clone failed: %s\033[0m\r\n", string(cloneOutput))))
+			return nil, fmt.Errorf("git clone failed: %w", err)
+		}
+		params.LogCallback([]byte("Repository cloned successfully.\r\n\r\n"))
 	}
-	params.LogCallback([]byte("Repository cloned successfully.\r\n\r\n"))
 
 	tfDir := filepath.Join(workDir, params.WorkingDir)
 
@@ -191,6 +203,53 @@ func (e *LocalExecutor) hasVarFile(tfDir string) bool {
 func (e *LocalExecutor) runTofu(ctx context.Context, dir string, args, env []string, logCallback func([]byte)) error {
 	_, err := e.runTofuCapture(ctx, dir, args, env, logCallback)
 	return err
+}
+
+func extractArchive(data []byte, destDir string) error {
+	gr, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("invalid gzip: %w", err)
+	}
+	defer gr.Close()
+
+	tr := tar.NewReader(gr)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("reading tar: %w", err)
+		}
+
+		// Prevent path traversal
+		cleanName := filepath.Clean(hdr.Name)
+		if strings.HasPrefix(cleanName, "..") {
+			return fmt.Errorf("invalid path in archive: %s", hdr.Name)
+		}
+
+		target := filepath.Join(destDir, cleanName)
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return err
+			}
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode))
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(f, tr); err != nil {
+				f.Close()
+				return err
+			}
+			f.Close()
+		}
+	}
+	return nil
 }
 
 func (e *LocalExecutor) runTofuCapture(ctx context.Context, dir string, args, env []string, logCallback func([]byte)) (string, error) {

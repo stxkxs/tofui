@@ -3,28 +3,36 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/oklog/ulid/v2"
 
 	"github.com/stxkxs/tofui/internal/auth"
 	"github.com/stxkxs/tofui/internal/handler/respond"
+	"github.com/stxkxs/tofui/internal/repository"
 	"github.com/stxkxs/tofui/internal/service"
+	"github.com/stxkxs/tofui/internal/storage"
 )
 
 type WorkspaceHandler struct {
 	svc      *service.WorkspaceService
 	auditSvc *service.AuditService
+	storage  *storage.S3Storage
+	queries  *repository.Queries
 }
 
-func NewWorkspaceHandler(svc *service.WorkspaceService, auditSvc *service.AuditService) *WorkspaceHandler {
-	return &WorkspaceHandler{svc: svc, auditSvc: auditSvc}
+func NewWorkspaceHandler(svc *service.WorkspaceService, auditSvc *service.AuditService, store *storage.S3Storage, queries *repository.Queries) *WorkspaceHandler {
+	return &WorkspaceHandler{svc: svc, auditSvc: auditSvc, storage: store, queries: queries}
 }
 
 type CreateWorkspaceRequest struct {
 	Name              string `json:"name"`
 	Description       string `json:"description"`
+	Source            string `json:"source"`
 	RepoURL           string `json:"repo_url"`
 	RepoBranch        string `json:"repo_branch"`
 	WorkingDir        string `json:"working_dir"`
@@ -98,22 +106,45 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" || req.RepoURL == "" {
-		respond.Error(w, http.StatusBadRequest, "name and repo_url are required")
+	if req.Name == "" {
+		respond.Error(w, http.StatusBadRequest, "name is required")
 		return
 	}
 	if len(req.Name) > 128 {
 		respond.Error(w, http.StatusBadRequest, "name must be at most 128 characters")
 		return
 	}
-	if len(req.RepoURL) > 2048 {
-		respond.Error(w, http.StatusBadRequest, "repo_url must be at most 2048 characters")
-		return
-	}
 	if len(req.Description) > 4096 {
 		respond.Error(w, http.StatusBadRequest, "description must be at most 4096 characters")
 		return
 	}
+
+	// Validate source
+	source := req.Source
+	if source == "" {
+		source = "vcs"
+	}
+	if source != "vcs" && source != "upload" {
+		respond.Error(w, http.StatusBadRequest, "source must be 'vcs' or 'upload'")
+		return
+	}
+
+	// VCS workspaces require repo_url
+	if source == "vcs" && req.RepoURL == "" {
+		respond.Error(w, http.StatusBadRequest, "repo_url is required for VCS workspaces")
+		return
+	}
+	if len(req.RepoURL) > 2048 {
+		respond.Error(w, http.StatusBadRequest, "repo_url must be at most 2048 characters")
+		return
+	}
+
+	// Upload workspaces cannot have VCS trigger
+	if source == "upload" && req.VcsTriggerEnabled {
+		respond.Error(w, http.StatusBadRequest, "vcs_trigger_enabled is not supported for upload workspaces")
+		return
+	}
+
 	if req.Environment != "" && req.Environment != "development" && req.Environment != "staging" && req.Environment != "production" {
 		respond.Error(w, http.StatusBadRequest, "environment must be development, staging, or production")
 		return
@@ -123,6 +154,7 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		OrgID:             userCtx.OrgID,
 		Name:              req.Name,
 		Description:       req.Description,
+		Source:            source,
 		RepoURL:           req.RepoURL,
 		RepoBranch:        req.RepoBranch,
 		WorkingDir:        req.WorkingDir,
@@ -243,6 +275,80 @@ func (h *WorkspaceHandler) Unlock(w http.ResponseWriter, r *http.Request) {
 	})
 
 	respond.JSON(w, http.StatusOK, workspace)
+}
+
+func (h *WorkspaceHandler) Upload(w http.ResponseWriter, r *http.Request) {
+	userCtx := auth.GetUser(r.Context())
+	workspaceID := chi.URLParam(r, "workspaceID")
+
+	ws, err := h.svc.Get(r.Context(), workspaceID, userCtx.OrgID)
+	if err != nil {
+		respond.Error(w, http.StatusNotFound, "workspace not found")
+		return
+	}
+
+	if ws.Source != "upload" {
+		respond.Error(w, http.StatusBadRequest, "workspace is not an upload workspace")
+		return
+	}
+
+	if h.storage == nil {
+		respond.Error(w, http.StatusServiceUnavailable, "storage not configured")
+		return
+	}
+
+	// Parse multipart form (50 MB max)
+	if err := r.ParseMultipartForm(50 << 20); err != nil {
+		respond.Error(w, http.StatusBadRequest, "failed to parse upload: file may exceed size limit")
+		return
+	}
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "file field is required")
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to read uploaded file")
+		return
+	}
+
+	if len(data) == 0 {
+		respond.Error(w, http.StatusBadRequest, "uploaded file is empty")
+		return
+	}
+
+	configVersionID := ulid.Make().String()
+	if _, err := h.storage.PutConfigArchive(r.Context(), workspaceID, configVersionID, data); err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to store configuration")
+		return
+	}
+
+	updated, err := h.queries.SetWorkspaceConfigVersion(r.Context(), repository.SetWorkspaceConfigVersionParams{
+		ID:                     workspaceID,
+		OrgID:                  userCtx.OrgID,
+		CurrentConfigVersionID: configVersionID,
+	})
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to update workspace")
+		return
+	}
+
+	ip, ua := auditContext(r)
+	h.auditSvc.Log(r.Context(), service.AuditEntry{
+		OrgID: userCtx.OrgID, UserID: userCtx.UserID,
+		Action: "workspace.upload", EntityType: "workspace", EntityID: workspaceID,
+		After: map[string]string{
+			"config_version_id": configVersionID,
+			"size":              fmt.Sprintf("%d", len(data)),
+		},
+		IPAddress: ip, UserAgent: ua,
+	})
+
+	respond.JSON(w, http.StatusOK, updated)
 }
 
 func (h *WorkspaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
