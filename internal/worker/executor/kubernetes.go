@@ -92,7 +92,11 @@ func (e *KubernetesExecutor) Execute(ctx context.Context, params ExecuteParams) 
 	var tfVarLines []string
 	for _, v := range params.Variables {
 		if v.Category == "terraform" {
-			tfVarLines = append(tfVarLines, fmt.Sprintf("%s = %q", v.Key, v.Value))
+			if isHCLLiteral(v.Value) {
+				tfVarLines = append(tfVarLines, fmt.Sprintf("%s = %s", v.Key, v.Value))
+			} else {
+				tfVarLines = append(tfVarLines, fmt.Sprintf("%s = %q", v.Key, v.Value))
+			}
 		}
 	}
 	if len(tfVarLines) > 0 {

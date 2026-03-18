@@ -184,11 +184,41 @@ func (e *LocalExecutor) Execute(ctx context.Context, params ExecuteParams) (*Exe
 	return result, nil
 }
 
+// isHCLLiteral returns true if the value looks like an HCL literal
+// (map, list, number, bool) that should not be quoted in tfvars.
+func isHCLLiteral(v string) bool {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return false
+	}
+	// Maps and objects: { ... }
+	if strings.HasPrefix(v, "{") && strings.HasSuffix(v, "}") {
+		return true
+	}
+	// Lists and tuples: [ ... ]
+	if strings.HasPrefix(v, "[") && strings.HasSuffix(v, "]") {
+		return true
+	}
+	// Booleans
+	if v == "true" || v == "false" {
+		return true
+	}
+	// Numbers (int or float)
+	if _, err := fmt.Sscanf(v, "%f", new(float64)); err == nil {
+		return true
+	}
+	return false
+}
+
 func (e *LocalExecutor) writeVariables(tfDir string, vars []Variable) error {
 	var tfVars []string
 	for _, v := range vars {
 		if v.Category == "terraform" {
-			tfVars = append(tfVars, fmt.Sprintf("%s = %q", v.Key, v.Value))
+			if isHCLLiteral(v.Value) {
+				tfVars = append(tfVars, fmt.Sprintf("%s = %s", v.Key, v.Value))
+			} else {
+				tfVars = append(tfVars, fmt.Sprintf("%s = %q", v.Key, v.Value))
+			}
 		}
 	}
 	if len(tfVars) == 0 {
