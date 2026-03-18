@@ -16,6 +16,7 @@ import { formatRelativeTime, formatDuration, getEnvironmentColor } from "@/lib/u
 import { ConfigUpload } from "@/components/workspace/ConfigUpload";
 import {
   Play,
+  Trash2,
   ArrowLeft,
   GitBranch,
   Upload,
@@ -240,6 +241,23 @@ export function WorkspaceDetail({ workspaceId }: Props) {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              className="text-destructive hover:bg-destructive/10"
+              onClick={() => {
+                if (confirm("Are you sure you want to destroy all resources?")) {
+                  createRunMutation.mutate("destroy");
+                }
+              }}
+              disabled={
+                createRunMutation.isPending ||
+                workspace.locked ||
+                (workspace.source === "upload" && !workspace.current_config_version_id)
+              }
+            >
+              <Trash2 className="w-4 h-4" />
+              Destroy
+            </Button>
             <Button
               onClick={() => createRunMutation.mutate("plan")}
               disabled={

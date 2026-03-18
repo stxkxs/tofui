@@ -169,10 +169,13 @@ func (e *LocalExecutor) Execute(ctx context.Context, params ExecuteParams) (*Exe
 		result.ResourcesDeleted = int32(deleted)
 	}
 
-	// Capture state file after apply/destroy
+	// Capture state after apply/destroy using "tofu state pull" which returns
+	// decrypted JSON even when state encryption is enabled.
 	if params.Operation == "apply" || params.Operation == "destroy" {
-		statePath := filepath.Join(tfDir, "terraform.tfstate")
-		if stateData, err := os.ReadFile(statePath); err == nil && len(stateData) > 0 {
+		pullCmd := exec.CommandContext(ctx, "tofu", "state", "pull")
+		pullCmd.Dir = tfDir
+		pullCmd.Env = env
+		if stateData, err := pullCmd.Output(); err == nil && len(stateData) > 0 {
 			result.StateFile = stateData
 			logger.Info("captured state file", "size", len(stateData))
 		}
