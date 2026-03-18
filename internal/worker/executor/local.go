@@ -85,6 +85,13 @@ func (e *LocalExecutor) Execute(ctx context.Context, params ExecuteParams) (*Exe
 
 	// Build environment with env variables
 	env := append(os.Environ(), "TF_IN_AUTOMATION=true", "TF_INPUT=false")
+
+	// Use plugin cache to avoid re-downloading providers every run
+	if os.Getenv("TF_PLUGIN_CACHE_DIR") == "" {
+		cacheDir := filepath.Join(os.TempDir(), "tofui-plugin-cache")
+		os.MkdirAll(cacheDir, 0755)
+		env = append(env, "TF_PLUGIN_CACHE_DIR="+cacheDir)
+	}
 	for _, v := range params.Variables {
 		if v.Category == "env" {
 			env = append(env, fmt.Sprintf("%s=%s", v.Key, v.Value))
