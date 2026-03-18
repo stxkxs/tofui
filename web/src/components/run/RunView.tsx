@@ -70,7 +70,7 @@ export function RunView({ workspaceId, runId }: Props) {
     run?.status === "cancelled" ||
     run?.status === "discarded";
 
-  const hasChanges = !!run?.plan_output && isTerminal;
+  const hasChanges = !!run?.plan_json_url && isTerminal;
 
   const { data: planJSON } = useQuery({
     queryKey: ["plan-json", runId],
