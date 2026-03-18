@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
-	"github.com/riverqueue/river/rivermigrate"
 
 	"github.com/stxkxs/tofui/internal/domain"
 	"github.com/stxkxs/tofui/internal/logstream"
@@ -125,18 +124,6 @@ func main() {
 		exec = executor.NewLocalExecutor()
 		logger.Info("using local executor")
 	}
-
-	// Run River migrations to ensure queue tables exist
-	migrator, err := rivermigrate.New(riverpgxv5.New(dbPool), nil)
-	if err != nil {
-		logger.Error("failed to create river migrator", "error", err)
-		os.Exit(1)
-	}
-	if _, err := migrator.Migrate(context.Background(), rivermigrate.DirectionUp, nil); err != nil {
-		logger.Error("failed to run river migrations", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("river migrations complete")
 
 	// Set up River workers
 	workers := river.NewWorkers()

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -10,6 +11,10 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivermigrate"
 
 	"github.com/stxkxs/tofui/internal/domain"
 )
@@ -29,6 +34,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Run application migrations (golang-migrate)
 	m, err := migrate.New(*migrationsPath, cfg.DatabaseURL)
 	if err != nil {
 		logger.Error("failed to create migrator", "error", err)
@@ -55,10 +61,41 @@ func main() {
 	}
 
 	if err != nil && err != migrate.ErrNoChange {
-		logger.Error("migration failed", "error", err)
+		logger.Error("app migration failed", "error", err)
 		os.Exit(1)
 	}
 
 	version, dirty, _ := m.Version()
-	logger.Info("migration complete", "version", version, "dirty", dirty)
+	logger.Info("app migration complete", "version", version, "dirty", dirty)
+
+	// Run River queue migrations
+	dir := rivermigrate.DirectionUp
+	if *direction == "down" {
+		dir = rivermigrate.DirectionDown
+	}
+
+	dbPool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("failed to connect for river migration", "error", err)
+		os.Exit(1)
+	}
+	defer dbPool.Close()
+
+	riverMigrator, err := rivermigrate.New[pgx.Tx](riverpgxv5.New(dbPool), nil)
+	if err != nil {
+		logger.Error("failed to create river migrator", "error", err)
+		os.Exit(1)
+	}
+
+	res, err := riverMigrator.Migrate(context.Background(), dir, nil)
+	if err != nil {
+		logger.Error("river migration failed", "error", err)
+		os.Exit(1)
+	}
+
+	if len(res.Versions) > 0 {
+		logger.Info("river migration complete", "versions_applied", len(res.Versions))
+	} else {
+		logger.Info("river migration complete", "status", "no change")
+	}
 }
