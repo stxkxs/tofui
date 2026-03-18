@@ -349,15 +349,25 @@ export function RunView({ workspaceId, runId }: Props) {
         </div>
       )}
 
-      {/* Terminal (Logs tab) */}
-      <div
-        className={cn(
-          "flex-1 bg-[#0a0a0a] min-h-0",
-          activeTab !== "logs" && "hidden"
-        )}
-      >
-        <div ref={termRef} className="h-full" role="log" aria-label="Run output logs" />
-      </div>
+      {/* Logs tab */}
+      {activeTab === "logs" && (
+        <div className="flex-1 min-h-0 overflow-auto bg-[#0a0a0a]">
+          {/* Live terminal for running jobs */}
+          <div
+            ref={termRef}
+            className={cn(
+              "h-full",
+              isTerminal && run?.plan_output && "hidden"
+            )}
+            role="log"
+            aria-label="Run output logs"
+          />
+          {/* Static log output for finished runs */}
+          {isTerminal && run?.plan_output && (
+            <pre className="p-4 text-sm font-mono text-[#e5e5e5] whitespace-pre-wrap">{run.plan_output}</pre>
+          )}
+        </div>
+      )}
 
       {/* Changes tab */}
       {activeTab === "changes" && hasChanges && (
