@@ -144,6 +144,10 @@ export function RunView({ workspaceId, runId }: Props) {
     onData: handleData,
   });
 
+  // Track whether we've written stored output to avoid duplicating
+  const wroteOutputRef = useRef(false);
+  const [termReady, setTermReady] = useState(false);
+
   // Initialize terminal once on mount
   useEffect(() => {
     if (!termRef.current || terminalRef.current) return;
@@ -179,6 +183,7 @@ export function RunView({ workspaceId, runId }: Props) {
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
     wroteOutputRef.current = false;
+    setTermReady(true);
 
     const observer = new ResizeObserver(() => {
       fitAddon.fit();
@@ -192,16 +197,15 @@ export function RunView({ workspaceId, runId }: Props) {
     };
   }, []);
 
-  // Write plan_output to terminal when a finished run's data arrives
-  const wroteOutputRef = useRef(false);
+  // Write plan_output to terminal when terminal is ready and run data is available
   useEffect(() => {
-    if (!terminalRef.current || wroteOutputRef.current) return;
+    if (!termReady || !terminalRef.current || wroteOutputRef.current) return;
     if (run?.plan_output && isTerminal) {
       terminalRef.current.clear();
       terminalRef.current.write(run.plan_output.replace(/\n/g, "\r\n"));
       wroteOutputRef.current = true;
     }
-  }, [run?.plan_output, isTerminal]);
+  }, [termReady, run?.plan_output, isTerminal]);
 
   if (isLoading) {
     return (
