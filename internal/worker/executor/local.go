@@ -203,8 +203,10 @@ func isHCLLiteral(v string) bool {
 	if v == "true" || v == "false" {
 		return true
 	}
-	// Numbers (int or float)
-	if _, err := fmt.Sscanf(v, "%f", new(float64)); err == nil {
+	// Numbers — must consume the entire string
+	var f float64
+	var trailing string
+	if n, _ := fmt.Sscanf(v, "%f%s", &f, &trailing); n == 1 {
 		return true
 	}
 	return false
