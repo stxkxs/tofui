@@ -12,6 +12,7 @@ import { Pagination } from "@/components/ui/pagination";
 import { CreateWorkspaceDialog } from "./CreateWorkspaceDialog";
 import { formatRelativeTime, getEnvironmentColor } from "@/lib/utils";
 import type { RunStatus } from "@/api/types";
+import { Link } from "@/components/ui/link";
 import {
   Plus,
   GitBranch,
@@ -152,7 +153,7 @@ export function WorkspaceList() {
         <>
           <div className="grid gap-3" role="list" aria-label="Workspaces">
             {data.data.map((workspace: Workspace) => (
-              <a
+              <Link
                 key={workspace.id}
                 href={`/workspaces/${workspace.id}`}
                 role="listitem"
@@ -217,7 +218,7 @@ export function WorkspaceList() {
                     </div>
                   </div>
                 </div>
-              </a>
+              </Link>
             ))}
           </div>
           <Pagination page={page} perPage={20} total={data.total} onPageChange={setPage} />

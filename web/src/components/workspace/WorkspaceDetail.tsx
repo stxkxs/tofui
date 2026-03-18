@@ -13,6 +13,8 @@ import { AccessPanel } from "@/components/workspace/AccessPanel";
 import { WorkspaceSettings } from "@/components/workspace/WorkspaceSettings";
 import { Pagination } from "@/components/ui/pagination";
 import { formatRelativeTime, formatDuration, getEnvironmentColor } from "@/lib/utils";
+import { navigate } from "@/hooks/useNavigate";
+import { Link } from "@/components/ui/link";
 import { ConfigUpload } from "@/components/workspace/ConfigUpload";
 import {
   Play,
@@ -105,7 +107,7 @@ export function WorkspaceDetail({ workspaceId }: Props) {
     },
     onSuccess: (run) => {
       queryClient.invalidateQueries({ queryKey: ["runs", workspaceId] });
-      window.location.href = `/workspaces/${workspaceId}/runs/${run.id}`;
+      navigate(`/workspaces/${workspaceId}/runs/${run.id}`);
     },
     onError: () => toast.error("Failed to create run"),
   });
@@ -170,13 +172,13 @@ export function WorkspaceDetail({ workspaceId }: Props) {
     <div className="p-8 max-w-6xl">
       {/* Header */}
       <div className="mb-6">
-        <a
+        <Link
           href="/"
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-4"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           Workspaces
-        </a>
+        </Link>
 
         <div className="flex items-start justify-between">
           <div>
@@ -345,7 +347,7 @@ export function WorkspaceDetail({ workspaceId }: Props) {
           ) : (
             <div className="space-y-2">
               {runsData.data.map((run: Run) => (
-                <a
+                <Link
                   key={run.id}
                   href={`/workspaces/${workspaceId}/runs/${run.id}`}
                   className="flex items-center justify-between p-4 rounded-lg border border-border bg-card hover:border-primary/30 transition-all group"
@@ -394,7 +396,7 @@ export function WorkspaceDetail({ workspaceId }: Props) {
                       ) : null}
                     </div>
                   ) : null}
-                </a>
+                </Link>
               ))}
               <Pagination
                 page={runsPage}

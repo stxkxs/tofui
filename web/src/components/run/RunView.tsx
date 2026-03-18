@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { formatRelativeTime, formatDuration } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+import { navigate } from "@/hooks/useNavigate";
+import { Link } from "@/components/ui/link";
 import { ArrowLeft, Clock, Timer, GitCommit, XCircle, RotateCcw } from "lucide-react";
 import type { RunStatus, TofuPlanJSON } from "@/api/types";
 
@@ -124,7 +126,7 @@ export function RunView({ workspaceId, runId }: Props) {
     },
     onSuccess: (newRun) => {
       toast.success("Retry run created");
-      window.location.href = `/workspaces/${workspaceId}/runs/${newRun.id}`;
+      navigate(`/workspaces/${workspaceId}/runs/${newRun.id}`);
     },
     onError: () => toast.error("Failed to retry run"),
   });
@@ -233,13 +235,13 @@ export function RunView({ workspaceId, runId }: Props) {
     <div className="h-full flex flex-col">
       {/* Header */}
       <div className="p-6 border-b border-border">
-        <a
+        <Link
           href={`/workspaces/${workspaceId}`}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-3"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           Back to workspace
-        </a>
+        </Link>
 
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
