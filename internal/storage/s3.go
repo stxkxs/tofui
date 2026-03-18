@@ -101,6 +101,26 @@ func (s *S3Storage) GetPlanJSON(ctx context.Context, key string) ([]byte, error)
 	return io.ReadAll(obj)
 }
 
+func (s *S3Storage) PutRawState(ctx context.Context, workspaceID string, serial int, data []byte) (string, error) {
+	key := fmt.Sprintf("state-raw/%s/%d.tfstate", workspaceID, serial)
+	_, err := s.client.PutObject(ctx, s.bucket, key, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{
+		ContentType: "application/octet-stream",
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to upload raw state: %w", err)
+	}
+	return key, nil
+}
+
+func (s *S3Storage) GetRawState(ctx context.Context, key string) ([]byte, error) {
+	obj, err := s.client.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer obj.Close()
+	return io.ReadAll(obj)
+}
+
 func (s *S3Storage) PutConfigArchive(ctx context.Context, workspaceID, configVersionID string, data []byte) (string, error) {
 	key := fmt.Sprintf("configs/%s/%s.tar.gz", workspaceID, configVersionID)
 	_, err := s.client.PutObject(ctx, s.bucket, key, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{

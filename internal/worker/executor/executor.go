@@ -42,7 +42,8 @@ type ExecuteResult struct {
 	ResourcesAdded   int32
 	ResourcesChanged int32
 	ResourcesDeleted int32
-	StateFile        []byte
+	StateFile        []byte // raw terraform.tfstate (may be encrypted)
+	StateJSON        []byte // decrypted state JSON from "tofu state pull" (for resource browsing)
 	PlanJSON         []byte
 }
 

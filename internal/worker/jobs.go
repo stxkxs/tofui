@@ -119,12 +119,19 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 		latestSV, err := w.queries.GetLatestStateVersion(ctx, repository.GetLatestStateVersionParams{
 			WorkspaceID: args.WorkspaceID, OrgID: args.OrgID,
 		})
-		if err == nil && latestSV.StateURL != "" {
-			if stateData, err := w.storage.GetState(ctx, latestSV.StateURL); err == nil {
+		if err == nil && latestSV.Serial > 0 {
+			// Try raw state first (preserves encryption), fall back to browse state
+			rawKey := fmt.Sprintf("state-raw/%s/%d.tfstate", args.WorkspaceID, latestSV.Serial)
+			if stateData, err := w.storage.GetRawState(ctx, rawKey); err == nil {
 				previousState = stateData
-				logger.Info("fetched previous state", "serial", latestSV.Serial, "size", len(stateData))
-			} else {
-				logger.Warn("failed to fetch previous state", "error", err)
+				logger.Info("fetched previous state (raw)", "serial", latestSV.Serial, "size", len(stateData))
+			} else if latestSV.StateURL != "" {
+				if stateData, err := w.storage.GetState(ctx, latestSV.StateURL); err == nil {
+					previousState = stateData
+					logger.Info("fetched previous state (browse)", "serial", latestSV.Serial, "size", len(stateData))
+				} else {
+					logger.Warn("failed to fetch previous state", "error", err)
+				}
 			}
 		}
 	}
@@ -218,14 +225,25 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 		}
 	}
 
-	// Upload state file to S3 after apply/destroy
+	// Upload state to S3 after apply/destroy
 	if result.StateFile != nil && w.storage != nil {
 		latestSV, _ := w.queries.GetLatestStateVersion(ctx, repository.GetLatestStateVersionParams{
 			WorkspaceID: args.WorkspaceID, OrgID: args.OrgID,
 		})
 		nextSerial := latestSV.Serial + 1
 
-		stateURL, err := w.storage.PutState(ctx, args.WorkspaceID, int(nextSerial), result.StateFile)
+		// Store raw state (may be encrypted) for restoration on next run
+		if _, err := w.storage.PutRawState(ctx, args.WorkspaceID, int(nextSerial), result.StateFile); err != nil {
+			logger.Error("failed to upload raw state", "error", err)
+		}
+
+		// Store decrypted JSON for the resource browser (fall back to raw if no decrypted version)
+		browseState := result.StateJSON
+		if len(browseState) == 0 {
+			browseState = result.StateFile
+		}
+
+		stateURL, err := w.storage.PutState(ctx, args.WorkspaceID, int(nextSerial), browseState)
 		if err != nil {
 			logger.Error("failed to upload state", "error", err)
 		} else {
