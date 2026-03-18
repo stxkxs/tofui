@@ -269,27 +269,29 @@ export function VariablesPanel({ workspaceId }: Props) {
           ) : (
             <div className="divide-y divide-border">
               {discoveredVars.map((v) => (
-                <div key={v.name} className="flex items-center justify-between px-4 py-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <code className="text-sm font-mono font-medium">{v.name}</code>
-                    {v.type && <Badge variant="outline" className="text-xs shrink-0">{v.type}</Badge>}
-                    {v.configured ? (
-                      <Badge className="text-xs bg-emerald-500/10 text-emerald-600 border-emerald-500/20 shrink-0"><Check className="w-3 h-3 mr-1" />configured</Badge>
-                    ) : v.required ? (
-                      <Badge className="text-xs bg-red-500/10 text-red-600 border-red-500/20 shrink-0">required</Badge>
-                    ) : (
-                      <Badge className="text-xs bg-amber-500/10 text-amber-600 border-amber-500/20 shrink-0">optional</Badge>
-                    )}
+                <div key={v.name} className="px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <code className="text-sm font-mono font-medium">{v.name}</code>
+                      {v.type && <Badge variant="outline" className="text-xs shrink-0">{v.type}</Badge>}
+                      {v.configured ? (
+                        <Badge className="text-xs bg-emerald-500/10 text-emerald-600 border-emerald-500/20 shrink-0"><Check className="w-3 h-3 mr-1" />configured</Badge>
+                      ) : v.required ? (
+                        <Badge className="text-xs bg-red-500/10 text-red-600 border-red-500/20 shrink-0">required</Badge>
+                      ) : (
+                        <Badge className="text-xs bg-amber-500/10 text-amber-600 border-amber-500/20 shrink-0">optional</Badge>
+                      )}
+                      {v.default !== undefined && <span className="text-xs font-mono text-muted-foreground">={v.default}</span>}
+                    </div>
+                    <div className="shrink-0 ml-3">
+                      {!v.configured && (
+                        <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => handleAddDiscovered(v)}>
+                          <Plus className="w-3 h-3" />Add
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    {v.description && <span className="text-xs text-muted-foreground max-w-[200px] truncate hidden sm:inline">{v.description}</span>}
-                    {v.default !== undefined && <span className="text-xs font-mono text-muted-foreground max-w-[120px] truncate">={v.default}</span>}
-                    {!v.configured && (
-                      <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => handleAddDiscovered(v)}>
-                        <Plus className="w-3 h-3" />Add
-                      </Button>
-                    )}
-                  </div>
+                  {v.description && <p className="text-xs text-muted-foreground mt-1">{v.description}</p>}
                 </div>
               ))}
             </div>
