@@ -183,6 +183,34 @@ export function VariablesPanel({ workspaceId }: Props) {
     onError: () => toast.error("Failed to import variables"),
   });
 
+  const addAllMutation = useMutation({
+    mutationFn: async (vars: DiscoveredVariable[]) => {
+      const { data, error } = await api.POST(
+        "/workspaces/{workspaceId}/variables/bulk",
+        {
+          params: { path: { workspaceId } },
+          body: {
+            variables: vars.map((v) => ({
+              key: v.name,
+              value: v.default ?? "",
+              sensitive: false,
+              category: "terraform" as const,
+              description: v.description,
+            })),
+          },
+        }
+      );
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["variables", workspaceId] });
+      discoverMutation.mutate();
+      toast.success("All variables added");
+    },
+    onError: () => toast.error("Failed to add variables"),
+  });
+
   const handleAddDiscovered = (v: DiscoveredVariable) => {
     setNewKey(v.name); setNewValue(v.default ?? "");
     setNewCategory("terraform"); setNewSensitive(false);
@@ -258,9 +286,23 @@ export function VariablesPanel({ workspaceId }: Props) {
               <Search className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm font-medium">Discovered Variables ({discoveredVars.length})</span>
             </div>
-            <button onClick={() => setDiscoveredVars(null)} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
-              <X className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-2">
+              {discoveredVars.filter((v) => !v.configured).length > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs h-7"
+                  disabled={addAllMutation.isPending}
+                  onClick={() => addAllMutation.mutate(discoveredVars.filter((v) => !v.configured))}
+                >
+                  {addAllMutation.isPending ? <Spinner className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                  Add all ({discoveredVars.filter((v) => !v.configured).length})
+                </Button>
+              )}
+              <button onClick={() => setDiscoveredVars(null)} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
           {discoveredVars.length === 0 ? (
             <div className="px-4 py-6 text-center">
