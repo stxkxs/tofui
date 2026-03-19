@@ -253,6 +253,12 @@ export interface ApprovalRequest {
   comment?: string;
 }
 
+export interface WorkspaceOutput {
+  name: string;
+  value: string;
+  type: string;
+}
+
 export interface DiscoveredVariable {
   name: string;
   type?: string;
@@ -520,6 +526,25 @@ export interface paths {
       parameters: { path: { workspaceId: string } };
       responses: {
         200: { content: { "application/json": StateResource[] } };
+      };
+    };
+  };
+  "/workspaces/{workspaceId}/state/current/outputs": {
+    get: {
+      parameters: { path: { workspaceId: string } };
+      responses: {
+        200: { content: { "application/json": WorkspaceOutput[] } };
+      };
+    };
+  };
+  "/workspaces/{workspaceId}/variables/import-outputs": {
+    post: {
+      parameters: { path: { workspaceId: string } };
+      requestBody: {
+        content: { "application/json": { source_workspace_id: string } };
+      };
+      responses: {
+        201: { content: { "application/json": WorkspaceVariable[] } };
       };
     };
   };

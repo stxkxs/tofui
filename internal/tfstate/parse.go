@@ -8,11 +8,25 @@ import (
 
 // TFState represents the top-level structure of an OpenTofu/Terraform state file.
 type TFState struct {
-	Version          int              `json:"version"`
-	TerraformVersion string           `json:"terraform_version"`
-	Serial           int              `json:"serial"`
-	Lineage          string           `json:"lineage"`
-	Resources        []TFStateResource `json:"resources"`
+	Version          int                        `json:"version"`
+	TerraformVersion string                     `json:"terraform_version"`
+	Serial           int                        `json:"serial"`
+	Lineage          string                     `json:"lineage"`
+	Outputs          map[string]TFStateOutput   `json:"outputs"`
+	Resources        []TFStateResource          `json:"resources"`
+}
+
+// TFStateOutput represents an output value in the state file.
+type TFStateOutput struct {
+	Value interface{} `json:"value"`
+	Type  interface{} `json:"type"`
+}
+
+// Output is a simplified output representation returned by the API.
+type Output struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+	Type  string `json:"type"`
 }
 
 // TFStateResource represents a resource block in the state file.
@@ -85,6 +99,48 @@ func ParseResources(data []byte) ([]Resource, error) {
 		resources = []Resource{}
 	}
 	return resources, nil
+}
+
+// ParseOutputs extracts output values from raw state JSON.
+func ParseOutputs(data []byte) ([]Output, error) {
+	var state TFState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("failed to parse state JSON: %w", err)
+	}
+
+	var outputs []Output
+	for name, out := range state.Outputs {
+		// Convert value to string representation
+		var valueStr string
+		switch v := out.Value.(type) {
+		case string:
+			valueStr = v
+		default:
+			b, _ := json.Marshal(v)
+			valueStr = string(b)
+		}
+
+		// Convert type to string
+		var typeStr string
+		switch t := out.Type.(type) {
+		case string:
+			typeStr = t
+		default:
+			b, _ := json.Marshal(t)
+			typeStr = string(b)
+		}
+
+		outputs = append(outputs, Output{
+			Name:  name,
+			Value: valueStr,
+			Type:  typeStr,
+		})
+	}
+
+	if outputs == nil {
+		outputs = []Output{}
+	}
+	return outputs, nil
 }
 
 // cleanProviderName strips the registry prefix from a provider string.

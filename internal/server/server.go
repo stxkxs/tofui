@@ -211,6 +211,7 @@ func (s *Server) setupRouter() {
 							r.Post("/", variableHandler.Create)
 							r.Post("/discover", variableHandler.Discover)
 							r.Post("/bulk", variableHandler.BulkCreate)
+							r.Post("/import-outputs", variableHandler.ImportOutputs)
 							r.Route("/{variableID}", func(r chi.Router) {
 								r.Put("/", variableHandler.Update)
 								r.Delete("/", variableHandler.Delete)
@@ -223,6 +224,7 @@ func (s *Server) setupRouter() {
 							r.Get("/", stateHandler.List)
 							r.Get("/current", stateHandler.GetCurrent)
 							r.Get("/current/resources", stateHandler.Resources)
+							r.Get("/current/outputs", stateHandler.Outputs)
 							r.Get("/diff", stateHandler.Diff)
 							r.Get("/{stateID}", stateHandler.Get)
 							r.Get("/{stateID}/download", stateHandler.Download)

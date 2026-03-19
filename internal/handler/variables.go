@@ -26,6 +26,7 @@ import (
 	"github.com/stxkxs/tofui/internal/service"
 	"github.com/stxkxs/tofui/internal/storage"
 	"github.com/stxkxs/tofui/internal/tfparse"
+	"github.com/stxkxs/tofui/internal/tfstate"
 )
 
 type VariableHandler struct {
@@ -457,6 +458,87 @@ func (h *VariableHandler) BulkCreate(w http.ResponseWriter, r *http.Request) {
 		if v.Sensitive {
 			v.Value = "***"
 		}
+		created = append(created, v)
+	}
+
+	respond.JSON(w, http.StatusCreated, created)
+}
+
+type ImportOutputsRequest struct {
+	SourceWorkspaceID string `json:"source_workspace_id"`
+}
+
+func (h *VariableHandler) ImportOutputs(w http.ResponseWriter, r *http.Request) {
+	userCtx := auth.GetUser(r.Context())
+	workspaceID := chi.URLParam(r, "workspaceID")
+
+	var req ImportOutputsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.SourceWorkspaceID == "" {
+		respond.Error(w, http.StatusBadRequest, "source_workspace_id is required")
+		return
+	}
+
+	if h.storage == nil {
+		respond.Error(w, http.StatusServiceUnavailable, "storage not configured")
+		return
+	}
+
+	// Get latest state from the source workspace
+	sv, err := h.queries.GetLatestStateVersion(r.Context(), repository.GetLatestStateVersionParams{
+		WorkspaceID: req.SourceWorkspaceID, OrgID: userCtx.OrgID,
+	})
+	if err != nil {
+		respond.Error(w, http.StatusNotFound, "source workspace has no state")
+		return
+	}
+
+	data, err := h.storage.GetState(r.Context(), sv.StateURL)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to fetch source state")
+		return
+	}
+
+	outputs, err := tfstate.ParseOutputs(data)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to parse source outputs")
+		return
+	}
+
+	if len(outputs) == 0 {
+		respond.Error(w, http.StatusBadRequest, "source workspace has no outputs")
+		return
+	}
+
+	// Create variables from outputs
+	ip, ua := auditContext(r)
+	var created []repository.WorkspaceVariable
+	for _, out := range outputs {
+		v, err := h.queries.CreateWorkspaceVariable(r.Context(), repository.CreateWorkspaceVariableParams{
+			ID:          ulid.Make().String(),
+			WorkspaceID: workspaceID,
+			OrgID:       userCtx.OrgID,
+			Key:         out.Name,
+			Value:       out.Value,
+			Sensitive:   false,
+			Category:    "terraform",
+			Description: fmt.Sprintf("Imported from workspace output (%s)", out.Type),
+		})
+		if err != nil {
+			// Skip duplicates
+			continue
+		}
+
+		auditVar := v
+		auditVar.Value = "***"
+		h.auditSvc.Log(r.Context(), service.AuditEntry{
+			OrgID: userCtx.OrgID, UserID: userCtx.UserID,
+			Action: "variable.import", EntityType: "variable", EntityID: v.ID,
+			After: auditVar, IPAddress: ip, UserAgent: ua,
+		})
 		created = append(created, v)
 	}
 

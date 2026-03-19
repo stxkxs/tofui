@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/api/client";
-import type { WorkspaceVariable, DiscoveredVariable } from "@/api/types";
+import type { WorkspaceVariable, DiscoveredVariable, Workspace } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -15,7 +15,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Plus, Trash2, Lock, Search, X, Check, Pencil, Eye, EyeOff, Upload } from "lucide-react";
+import { Plus, Trash2, Lock, Search, X, Check, Pencil, Eye, EyeOff, Upload, ArrowDownToLine } from "lucide-react";
 
 interface Props {
   workspaceId: string;
@@ -65,6 +65,10 @@ export function VariablesPanel({ workspaceId }: Props) {
   const [bulkCategory, setBulkCategory] = useState<"terraform" | "env">("terraform");
   const [bulkSensitive, setBulkSensitive] = useState(false);
   const [bulkParsed, setBulkParsed] = useState<{ key: string; value: string }[] | null>(null);
+
+  // Import outputs state
+  const [showImportOutputs, setShowImportOutputs] = useState(false);
+  const [importWorkspaces, setImportWorkspaces] = useState<Workspace[] | null>(null);
 
   const { data: variables, isLoading, isError } = useQuery({
     queryKey: ["variables", workspaceId],
@@ -211,6 +215,44 @@ export function VariablesPanel({ workspaceId }: Props) {
     onError: () => toast.error("Failed to add variables"),
   });
 
+  const fetchWorkspacesMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.GET("/workspaces", {
+        params: { query: { per_page: 100 } },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      const others = (data.data as Workspace[]).filter((w: Workspace) => w.id !== workspaceId);
+      setImportWorkspaces(others);
+      setShowImportOutputs(true);
+    },
+    onError: () => toast.error("Failed to load workspaces"),
+  });
+
+  const importOutputsMutation = useMutation({
+    mutationFn: async (sourceWorkspaceId: string) => {
+      const { data, error } = await api.POST(
+        "/workspaces/{workspaceId}/variables/import-outputs",
+        {
+          params: { path: { workspaceId } },
+          body: { source_workspace_id: sourceWorkspaceId },
+        }
+      );
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["variables", workspaceId] });
+      setShowImportOutputs(false);
+      setImportWorkspaces(null);
+      const count = Array.isArray(data) ? data.length : 0;
+      toast.success(`Imported ${count} output(s) as variables`);
+    },
+    onError: () => toast.error("Failed to import outputs"),
+  });
+
   const handleAddDiscovered = (v: DiscoveredVariable) => {
     setNewKey(v.name); setNewValue(v.default ?? "");
     setNewCategory("terraform"); setNewSensitive(false);
@@ -266,6 +308,10 @@ export function VariablesPanel({ workspaceId }: Props) {
           <Button size="sm" variant="outline" onClick={() => discoverMutation.mutate()} disabled={discoverMutation.isPending}>
             {discoverMutation.isPending ? <Spinner className="w-3.5 h-3.5" /> : <Search className="w-3.5 h-3.5" />}
             Discover
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => fetchWorkspacesMutation.mutate()} disabled={fetchWorkspacesMutation.isPending}>
+            {fetchWorkspacesMutation.isPending ? <Spinner className="w-3.5 h-3.5" /> : <ArrowDownToLine className="w-3.5 h-3.5" />}
+            Import Outputs
           </Button>
           <Button size="sm" variant="outline" onClick={() => setShowBulkImport(true)}>
             <Upload className="w-3.5 h-3.5" />
@@ -463,6 +509,38 @@ export function VariablesPanel({ workspaceId }: Props) {
             <Button variant="destructive" size="sm" onClick={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); }} disabled={deleteMutation.isPending}>
               {deleteMutation.isPending ? <Spinner /> : "Delete"}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import outputs dialog */}
+      <Dialog open={showImportOutputs} onClose={() => { setShowImportOutputs(false); setImportWorkspaces(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import Outputs</DialogTitle>
+            <DialogDescription>
+              Import output values from another workspace as variables.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 mt-2 max-h-80 overflow-auto">
+            {importWorkspaces?.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">No other workspaces found.</p>
+            ) : (
+              importWorkspaces?.map((ws) => (
+                <button
+                  key={ws.id}
+                  onClick={() => importOutputsMutation.mutate(ws.id)}
+                  disabled={importOutputsMutation.isPending}
+                  className="w-full flex items-center justify-between px-4 py-3 rounded-lg border border-border hover:border-primary/30 transition-colors text-left cursor-pointer"
+                >
+                  <div>
+                    <div className="text-sm font-medium">{ws.name}</div>
+                    <div className="text-xs text-muted-foreground">{ws.environment} &middot; {ws.source}</div>
+                  </div>
+                  <ArrowDownToLine className="w-4 h-4 text-muted-foreground" />
+                </button>
+              ))
+            )}
           </div>
         </DialogContent>
       </Dialog>

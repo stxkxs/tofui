@@ -143,6 +143,39 @@ func (h *StateHandler) Resources(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, resources)
 }
 
+func (h *StateHandler) Outputs(w http.ResponseWriter, r *http.Request) {
+	userCtx := auth.GetUser(r.Context())
+	workspaceID := chi.URLParam(r, "workspaceID")
+
+	sv, err := h.queries.GetLatestStateVersion(r.Context(), repository.GetLatestStateVersionParams{
+		WorkspaceID: workspaceID,
+		OrgID:       userCtx.OrgID,
+	})
+	if err != nil {
+		respond.Error(w, http.StatusNotFound, "no state found")
+		return
+	}
+
+	if h.storage == nil {
+		respond.Error(w, http.StatusServiceUnavailable, "storage not configured")
+		return
+	}
+
+	data, err := h.storage.GetState(r.Context(), sv.StateURL)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to fetch state")
+		return
+	}
+
+	outputs, err := tfstate.ParseOutputs(data)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to parse outputs")
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, outputs)
+}
+
 func (h *StateHandler) Diff(w http.ResponseWriter, r *http.Request) {
 	userCtx := auth.GetUser(r.Context())
 	workspaceID := chi.URLParam(r, "workspaceID")
