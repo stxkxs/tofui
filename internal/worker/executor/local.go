@@ -117,6 +117,36 @@ func (e *LocalExecutor) Execute(ctx context.Context, params ExecuteParams) (*Exe
 	var tfArgs []string
 
 	switch params.Operation {
+	case "import":
+		params.LogCallback([]byte("\033[1m$ tofu import\033[0m\r\n"))
+		for _, res := range params.ImportResources {
+			params.LogCallback([]byte(fmt.Sprintf("Importing %s = %s...\r\n", res.Address, res.ID)))
+			importArgs := []string{"import", "-no-color"}
+			if e.hasVarFile(tfDir) {
+				importArgs = append(importArgs, "-var-file=tofui.auto.tfvars")
+			}
+			importArgs = append(importArgs, res.Address, res.ID)
+			if err := e.runTofu(ctx, tfDir, importArgs, env, params.LogCallback); err != nil {
+				params.LogCallback([]byte(fmt.Sprintf("\033[31mImport failed for %s: %s\033[0m\r\n", res.Address, err)))
+				return nil, fmt.Errorf("tofu import failed for %s: %w", res.Address, err)
+			}
+			params.LogCallback([]byte(fmt.Sprintf("\033[32mImported %s\033[0m\r\n", res.Address)))
+		}
+		params.LogCallback([]byte(fmt.Sprintf("\r\n\033[32mSuccessfully imported %d resource(s)\033[0m\r\n", len(params.ImportResources))))
+
+		// Capture state after import
+		statePath := filepath.Join(tfDir, "terraform.tfstate")
+		if stateData, err := os.ReadFile(statePath); err == nil && len(stateData) > 0 {
+			result.StateFile = stateData
+		}
+		pullCmd := exec.CommandContext(ctx, "tofu", "state", "pull")
+		pullCmd.Dir = tfDir
+		pullCmd.Env = env
+		if jsonData, err := pullCmd.Output(); err == nil && len(jsonData) > 0 {
+			result.StateJSON = jsonData
+		}
+		return result, nil
+
 	case "plan":
 		tfArgs = []string{"plan", "-no-color", "-detailed-exitcode", "-out=planfile"}
 		if e.hasVarFile(tfDir) {

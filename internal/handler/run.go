@@ -16,6 +16,7 @@ import (
 	"github.com/stxkxs/tofui/internal/logstream"
 	"github.com/stxkxs/tofui/internal/service"
 	"github.com/stxkxs/tofui/internal/storage"
+	"github.com/stxkxs/tofui/internal/worker"
 )
 
 type RunHandler struct {
@@ -45,8 +46,14 @@ func wsOriginPatterns(origins []string) []string {
 	return patterns
 }
 
+type ImportResourceRequest struct {
+	Address string `json:"address"`
+	ID      string `json:"id"`
+}
+
 type CreateRunRequest struct {
-	Operation string `json:"operation"`
+	Operation string                  `json:"operation"`
+	Imports   []ImportResourceRequest `json:"imports,omitempty"`
 }
 
 func (h *RunHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +110,12 @@ func (h *RunHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !isValidOperation(req.Operation) {
-		respond.Error(w, http.StatusBadRequest, "operation must be 'plan', 'apply', or 'destroy'")
+		respond.Error(w, http.StatusBadRequest, "operation must be 'plan', 'apply', 'destroy', or 'import'")
+		return
+	}
+
+	if req.Operation == "import" && len(req.Imports) == 0 {
+		respond.Error(w, http.StatusBadRequest, "imports array is required for import operation")
 		return
 	}
 
@@ -118,11 +130,17 @@ func (h *RunHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var imports []worker.ImportResource
+	for _, imp := range req.Imports {
+		imports = append(imports, worker.ImportResource{Address: imp.Address, ID: imp.ID})
+	}
+
 	run, err := h.svc.Create(r.Context(), service.CreateRunParams{
 		WorkspaceID: workspaceID,
 		OrgID:       userCtx.OrgID,
 		Operation:   req.Operation,
 		CreatedBy:   userCtx.UserID,
+		Imports:     imports,
 	})
 	if err != nil {
 		slog.Error("failed to create run", "error", err)
@@ -143,7 +161,7 @@ func (h *RunHandler) Create(w http.ResponseWriter, r *http.Request) {
 // isValidOperation returns whether an operation string is valid.
 func isValidOperation(op string) bool {
 	switch op {
-	case "plan", "apply", "destroy":
+	case "plan", "apply", "destroy", "import":
 		return true
 	default:
 		return false

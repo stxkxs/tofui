@@ -9,11 +9,17 @@ type Variable struct {
 	Category string // "terraform" or "env"
 }
 
+// ImportResource represents a single resource to import.
+type ImportResource struct {
+	Address string // e.g. "aws_vpc.main"
+	ID      string // e.g. "vpc-0b7f9b9c287a313aa"
+}
+
 // ExecuteParams holds the parameters for running OpenTofu.
 type ExecuteParams struct {
 	RunID       string
 	WorkspaceID string
-	Operation   string // "plan", "apply", "destroy"
+	Operation   string // "plan", "apply", "destroy", "import"
 	RepoURL     string
 	RepoBranch  string
 	WorkingDir  string
@@ -28,6 +34,9 @@ type ExecuteParams struct {
 	// StateEncryptionPassphrase enables OpenTofu 1.7+ native state encryption.
 	// When set, an encryption override file is written with PBKDF2+AES-GCM.
 	StateEncryptionPassphrase string
+
+	// ImportResources is the list of resources to import (import operation only).
+	ImportResources []ImportResource
 
 	// Source is "vcs" or "upload". When "upload", ArchiveData contains the tar.gz.
 	Source string

@@ -19,11 +19,17 @@ import (
 	"github.com/stxkxs/tofui/internal/worker/executor"
 )
 
+type ImportResource struct {
+	Address string `json:"address"`
+	ID      string `json:"id"`
+}
+
 type RunJobArgs struct {
-	RunID       string `json:"run_id"`
-	WorkspaceID string `json:"workspace_id"`
-	OrgID       string `json:"org_id"`
-	Operation   string `json:"operation"`
+	RunID       string           `json:"run_id"`
+	WorkspaceID string           `json:"workspace_id"`
+	OrgID       string           `json:"org_id"`
+	Operation   string           `json:"operation"`
+	Imports     []ImportResource `json:"imports,omitempty"`
 }
 
 func (RunJobArgs) Kind() string { return "run" }
@@ -80,7 +86,7 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 
 	// Update run status
 	status := "planning"
-	if args.Operation == "apply" || args.Operation == "destroy" {
+	if args.Operation == "apply" || args.Operation == "destroy" || args.Operation == "import" {
 		status = "applying"
 	}
 	if _, err := w.queries.UpdateRunStarted(ctx, repository.UpdateRunStartedParams{ID: args.RunID, Status: status}); err != nil {
@@ -176,6 +182,7 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 		StateEncryptionPassphrase: stateEncPassphrase,
 		Source:                    workspace.Source,
 		ArchiveData:               archiveData,
+		ImportResources:           toExecutorImports(args.Imports),
 	})
 
 	if err != nil {
@@ -184,7 +191,7 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 
 	// Determine final status
 	finalStatus := "planned"
-	if args.Operation == "apply" || args.Operation == "destroy" {
+	if args.Operation == "apply" || args.Operation == "destroy" || args.Operation == "import" {
 		finalStatus = "applied"
 	} else if args.Operation == "plan" {
 		finalStatus = postPlanAction(workspace.AutoApply, workspace.RequiresApproval)
@@ -377,6 +384,17 @@ func postPlanAction(autoApply, requiresApproval bool) string {
 		return "awaiting_approval"
 	}
 	return "planned"
+}
+
+func toExecutorImports(imports []ImportResource) []executor.ImportResource {
+	if len(imports) == 0 {
+		return nil
+	}
+	result := make([]executor.ImportResource, len(imports))
+	for i, imp := range imports {
+		result[i] = executor.ImportResource{Address: imp.Address, ID: imp.ID}
+	}
+	return result
 }
 
 func (w *RunJobWorker) enqueueNextPendingRun(ctx context.Context, workspaceID string, logger *slog.Logger) {
