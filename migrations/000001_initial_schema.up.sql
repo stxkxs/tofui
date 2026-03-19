@@ -18,7 +18,8 @@ CREATE TYPE run_status AS ENUM (
 CREATE TYPE run_operation AS ENUM (
     'plan',
     'apply',
-    'destroy'
+    'destroy',
+    'import'
 );
 
 CREATE TYPE user_role AS ENUM (
