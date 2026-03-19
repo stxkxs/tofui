@@ -513,36 +513,70 @@ func (h *VariableHandler) ImportOutputs(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Create variables from outputs
-	ip, ua := auditContext(r)
-	var created []repository.WorkspaceVariable
-	for _, out := range outputs {
-		v, err := h.queries.CreateWorkspaceVariable(r.Context(), repository.CreateWorkspaceVariableParams{
-			ID:          ulid.Make().String(),
-			WorkspaceID: workspaceID,
-			OrgID:       userCtx.OrgID,
-			Key:         out.Name,
-			Value:       out.Value,
-			Sensitive:   false,
-			Category:    "terraform",
-			Description: fmt.Sprintf("Imported from workspace output (%s)", out.Type),
-		})
-		if err != nil {
-			// Skip duplicates
-			continue
+	// Get existing variables to detect duplicates
+	existing, err := h.queries.ListWorkspaceVariables(r.Context(), repository.ListWorkspaceVariablesParams{
+		WorkspaceID: workspaceID, OrgID: userCtx.OrgID,
+	})
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to list existing variables")
+		return
+	}
+	existingByKey := make(map[string]repository.WorkspaceVariable, len(existing))
+	for _, v := range existing {
+		if v.Category == "terraform" {
+			existingByKey[v.Key] = v
 		}
-
-		auditVar := v
-		auditVar.Value = "***"
-		h.auditSvc.Log(r.Context(), service.AuditEntry{
-			OrgID: userCtx.OrgID, UserID: userCtx.UserID,
-			Action: "variable.import", EntityType: "variable", EntityID: v.ID,
-			After: auditVar, IPAddress: ip, UserAgent: ua,
-		})
-		created = append(created, v)
 	}
 
-	respond.JSON(w, http.StatusCreated, created)
+	// Create or update variables from outputs
+	ip, ua := auditContext(r)
+	var result []repository.WorkspaceVariable
+	for _, out := range outputs {
+		desc := fmt.Sprintf("Imported from workspace output (%s)", out.Type)
+
+		if ev, exists := existingByKey[out.Name]; exists {
+			// Update existing variable with the output value
+			v, err := h.queries.UpdateWorkspaceVariable(r.Context(), repository.UpdateWorkspaceVariableParams{
+				ID: ev.ID, OrgID: userCtx.OrgID, Value: out.Value, Sensitive: false, Description: desc,
+			})
+			if err != nil {
+				continue
+			}
+			auditVar := v
+			auditVar.Value = "***"
+			h.auditSvc.Log(r.Context(), service.AuditEntry{
+				OrgID: userCtx.OrgID, UserID: userCtx.UserID,
+				Action: "variable.import", EntityType: "variable", EntityID: v.ID,
+				After: auditVar, IPAddress: ip, UserAgent: ua,
+			})
+			result = append(result, v)
+		} else {
+			// Create new variable
+			v, err := h.queries.CreateWorkspaceVariable(r.Context(), repository.CreateWorkspaceVariableParams{
+				ID:          ulid.Make().String(),
+				WorkspaceID: workspaceID,
+				OrgID:       userCtx.OrgID,
+				Key:         out.Name,
+				Value:       out.Value,
+				Sensitive:   false,
+				Category:    "terraform",
+				Description: desc,
+			})
+			if err != nil {
+				continue
+			}
+			auditVar := v
+			auditVar.Value = "***"
+			h.auditSvc.Log(r.Context(), service.AuditEntry{
+				OrgID: userCtx.OrgID, UserID: userCtx.UserID,
+				Action: "variable.import", EntityType: "variable", EntityID: v.ID,
+				After: auditVar, IPAddress: ip, UserAgent: ua,
+			})
+			result = append(result, v)
+		}
+	}
+
+	respond.JSON(w, http.StatusCreated, result)
 }
 
 func (h *VariableHandler) RevealValue(w http.ResponseWriter, r *http.Request) {
