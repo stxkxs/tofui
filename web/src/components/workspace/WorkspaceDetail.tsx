@@ -5,6 +5,7 @@ import { api } from "@/api/client";
 import type { Run, Workspace } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { RunStatusBadge } from "@/components/run/RunStatusBadge";
 import { VariablesPanel } from "@/components/workspace/VariablesPanel";
@@ -17,11 +18,19 @@ import { navigate } from "@/hooks/useNavigate";
 import { Link } from "@/components/ui/link";
 import { ConfigUpload } from "@/components/workspace/ConfigUpload";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import {
   Play,
   Trash2,
   ArrowLeft,
   GitBranch,
   Upload,
+  Import,
   Clock,
   Timer,
   Settings,
@@ -31,6 +40,8 @@ import {
   Lock,
   Unlock,
   Users,
+  Plus,
+  X,
 } from "lucide-react";
 
 interface Props {
@@ -93,13 +104,16 @@ export function WorkspaceDetail({ workspaceId }: Props) {
     enabled: tab === "runs",
   });
 
+  const [showImport, setShowImport] = useState(false);
+  const [importRows, setImportRows] = useState([{ address: "", id: "" }]);
+
   const createRunMutation = useMutation({
-    mutationFn: async (operation: string) => {
+    mutationFn: async (params: { operation: string; imports?: { address: string; id: string }[] }) => {
       const { data, error } = await api.POST(
         "/workspaces/{workspaceId}/runs",
         {
           params: { path: { workspaceId } },
-          body: { operation: operation as "plan" | "apply" | "destroy" },
+          body: params as any,
         }
       );
       if (error) throw error;
@@ -107,6 +121,8 @@ export function WorkspaceDetail({ workspaceId }: Props) {
     },
     onSuccess: (run) => {
       queryClient.invalidateQueries({ queryKey: ["runs", workspaceId] });
+      setShowImport(false);
+      setImportRows([{ address: "", id: "" }]);
       navigate(`/workspaces/${workspaceId}/runs/${run.id}`);
     },
     onError: () => toast.error("Failed to create run"),
@@ -245,10 +261,22 @@ export function WorkspaceDetail({ workspaceId }: Props) {
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
+              onClick={() => setShowImport(true)}
+              disabled={
+                createRunMutation.isPending ||
+                workspace.locked ||
+                (workspace.source === "upload" && !workspace.current_config_version_id)
+              }
+            >
+              <Import className="w-4 h-4" />
+              Import
+            </Button>
+            <Button
+              variant="outline"
               className="text-destructive hover:bg-destructive/10"
               onClick={() => {
                 if (confirm("Are you sure you want to destroy all resources?")) {
-                  createRunMutation.mutate("destroy");
+                  createRunMutation.mutate({ operation: "destroy" });
                 }
               }}
               disabled={
@@ -261,7 +289,7 @@ export function WorkspaceDetail({ workspaceId }: Props) {
               Destroy
             </Button>
             <Button
-              onClick={() => createRunMutation.mutate("plan")}
+              onClick={() => createRunMutation.mutate({ operation: "plan" })}
               disabled={
                 createRunMutation.isPending ||
                 workspace.locked ||
@@ -308,6 +336,79 @@ export function WorkspaceDetail({ workspaceId }: Props) {
         </div>
       </div>
 
+      {/* Import dialog */}
+      <Dialog open={showImport} onClose={() => { setShowImport(false); setImportRows([{ address: "", id: "" }]); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import resources</DialogTitle>
+            <DialogDescription>
+              Import existing infrastructure into tofu state. Enter the resource address from your .tf files and the cloud resource ID.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 mt-2 max-h-96 overflow-auto">
+            {importRows.map((row, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <Input
+                  placeholder="module.eks.aws_eks_cluster.this[0]"
+                  value={row.address}
+                  onChange={(e) => {
+                    const next = [...importRows];
+                    next[i] = { ...next[i], address: e.target.value };
+                    setImportRows(next);
+                  }}
+                  className="font-mono text-xs flex-1"
+                />
+                <Input
+                  placeholder="production-eks"
+                  value={row.id}
+                  onChange={(e) => {
+                    const next = [...importRows];
+                    next[i] = { ...next[i], id: e.target.value };
+                    setImportRows(next);
+                  }}
+                  className="font-mono text-xs flex-1"
+                />
+                {importRows.length > 1 && (
+                  <button
+                    onClick={() => setImportRows(importRows.filter((_, j) => j !== i))}
+                    className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer shrink-0"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            ))}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setImportRows([...importRows, { address: "", id: "" }])}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add resource
+            </Button>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="ghost" onClick={() => { setShowImport(false); setImportRows([{ address: "", id: "" }]); }}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                const valid = importRows.filter((r) => r.address.trim() && r.id.trim());
+                if (valid.length === 0) { toast.error("Add at least one resource"); return; }
+                createRunMutation.mutate({
+                  operation: "import",
+                  imports: valid.map((r) => ({ address: r.address.trim(), id: r.id.trim() })),
+                });
+              }}
+              disabled={createRunMutation.isPending}
+            >
+              {createRunMutation.isPending ? <Spinner /> : <Import className="w-4 h-4" />}
+              Import {importRows.filter((r) => r.address && r.id).length} resource(s)
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Tab content */}
       {tab === "runs" && (
         <div>
@@ -337,7 +438,7 @@ export function WorkspaceDetail({ workspaceId }: Props) {
               </p>
               <Button
                 size="sm"
-                onClick={() => createRunMutation.mutate("plan")}
+                onClick={() => createRunMutation.mutate({ operation: "plan" })}
                 disabled={createRunMutation.isPending}
               >
                 <Play className="w-3.5 h-3.5" />
