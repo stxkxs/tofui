@@ -186,6 +186,32 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 	})
 
 	if err != nil {
+		// Save partial state if the executor captured it (e.g. failed apply with some resources created)
+		if result != nil && result.StateFile != nil && w.storage != nil {
+			latestSV, _ := w.queries.GetLatestStateVersion(ctx, repository.GetLatestStateVersionParams{
+				WorkspaceID: args.WorkspaceID, OrgID: args.OrgID,
+			})
+			nextSerial := latestSV.Serial + 1
+
+			if _, storeErr := w.storage.PutRawState(ctx, args.WorkspaceID, int(nextSerial), result.StateFile); storeErr != nil {
+				logger.Error("failed to upload partial raw state", "error", storeErr)
+			}
+
+			browseState := result.StateJSON
+			if len(browseState) == 0 {
+				browseState = result.StateFile
+			}
+			if stateURL, storeErr := w.storage.PutState(ctx, args.WorkspaceID, int(nextSerial), browseState); storeErr != nil {
+				logger.Error("failed to upload partial state", "error", storeErr)
+			} else {
+				w.queries.CreateStateVersion(ctx, repository.CreateStateVersionParams{
+					ID: ulid.Make().String(), WorkspaceID: args.WorkspaceID, OrgID: args.OrgID,
+					RunID: args.RunID, Serial: nextSerial, StateURL: stateURL,
+					ResourceCount: 0, ResourceSummary: "partial (errored)",
+				})
+				logger.Info("saved partial state from failed run", "serial", nextSerial)
+			}
+		}
 		return w.failRun(ctx, args, logger, err, logBuf.String())
 	}
 

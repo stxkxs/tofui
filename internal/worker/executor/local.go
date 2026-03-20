@@ -174,6 +174,23 @@ func (e *LocalExecutor) Execute(ctx context.Context, params ExecuteParams) (*Exe
 		if params.Operation == "plan" && strings.Contains(err.Error(), "exit status 2") {
 			logger.Info("plan detected changes")
 		} else {
+			// For apply/destroy, capture partial state before returning the error
+			// so resources created before the failure are tracked
+			if params.Operation == "apply" || params.Operation == "destroy" {
+				result.Output = output
+				statePath := filepath.Join(tfDir, "terraform.tfstate")
+				if stateData, readErr := os.ReadFile(statePath); readErr == nil && len(stateData) > 0 {
+					result.StateFile = stateData
+					logger.Info("captured partial state from failed apply", "size", len(stateData))
+				}
+				pullCmd := exec.CommandContext(ctx, "tofu", "state", "pull")
+				pullCmd.Dir = tfDir
+				pullCmd.Env = env
+				if jsonData, pullErr := pullCmd.Output(); pullErr == nil && len(jsonData) > 0 {
+					result.StateJSON = jsonData
+				}
+				return result, fmt.Errorf("tofu %s failed: %w", params.Operation, err)
+			}
 			return nil, fmt.Errorf("tofu %s failed: %w", params.Operation, err)
 		}
 	}
