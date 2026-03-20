@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/api/client";
-import type { WorkspaceVariable, DiscoveredVariable, Workspace } from "@/api/types";
+import type { WorkspaceVariable, DiscoveredVariable, Workspace, ListResponse } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -15,7 +15,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Plus, Trash2, Lock, Search, X, Check, Pencil, Eye, EyeOff, Upload, ArrowDownToLine } from "lucide-react";
+import { Plus, Trash2, Lock, Search, X, Check, Pencil, Eye, EyeOff, Upload, ArrowDownToLine, Copy } from "lucide-react";
 
 interface Props {
   workspaceId: string;
@@ -69,6 +69,10 @@ export function VariablesPanel({ workspaceId }: Props) {
   // Import outputs state
   const [showImportOutputs, setShowImportOutputs] = useState(false);
   const [importWorkspaces, setImportWorkspaces] = useState<Workspace[] | null>(null);
+
+  // Copy variables state
+  const [showCopyVars, setShowCopyVars] = useState(false);
+  const [copyWorkspaces, setCopyWorkspaces] = useState<Workspace[] | null>(null);
 
   const { data: variables, isLoading, isError } = useQuery({
     queryKey: ["variables", workspaceId],
@@ -253,6 +257,42 @@ export function VariablesPanel({ workspaceId }: Props) {
     onError: () => toast.error("Failed to import outputs"),
   });
 
+  const copyVariablesMutation = useMutation({
+    mutationFn: async (sourceWorkspaceId: string) => {
+      const { data, error } = await api.POST(
+        "/workspaces/{workspaceId}/variables/copy",
+        {
+          params: { path: { workspaceId } },
+          body: { source_workspace_id: sourceWorkspaceId },
+        }
+      );
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["variables", workspaceId] });
+      setShowCopyVars(false);
+      setCopyWorkspaces(null);
+      toast.success("Variables copied");
+    },
+    onError: () => toast.error("Failed to copy variables"),
+  });
+
+  const openCopyDialog = async () => {
+    setShowCopyVars(true);
+    try {
+      const { data, error } = await api.GET("/workspaces", {
+        params: { query: { per_page: 100 } },
+      });
+      if (error) throw error;
+      const list = (data as ListResponse<Workspace>).data ?? [];
+      setCopyWorkspaces(list.filter((w: Workspace) => w.id !== workspaceId));
+    } catch {
+      toast.error("Failed to load workspaces");
+      setShowCopyVars(false);
+    }
+  };
+
   const handleAddDiscovered = (v: DiscoveredVariable) => {
     setNewKey(v.name); setNewValue(v.default ?? "");
     setNewCategory("terraform"); setNewSensitive(false);
@@ -316,6 +356,10 @@ export function VariablesPanel({ workspaceId }: Props) {
           <Button size="sm" variant="outline" onClick={() => setShowBulkImport(true)}>
             <Upload className="w-3.5 h-3.5" />
             Bulk Import
+          </Button>
+          <Button size="sm" variant="outline" onClick={openCopyDialog}>
+            <Copy className="w-3.5 h-3.5" />
+            Copy Variables
           </Button>
           <Button size="sm" variant="outline" onClick={() => setShowForm(!showForm)}>
             <Plus className="w-3.5 h-3.5" />
@@ -541,6 +585,49 @@ export function VariablesPanel({ workspaceId }: Props) {
                 </button>
               ))
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Copy variables dialog */}
+      <Dialog open={showCopyVars} onClose={() => { setShowCopyVars(false); setCopyWorkspaces(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Copy Variables</DialogTitle>
+            <DialogDescription>
+              Select a workspace to copy variables from. Existing variables with the same key and category will be updated.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 mt-2">
+            {!copyWorkspaces ? (
+              <div className="flex items-center justify-center py-8">
+                <Spinner className="w-5 h-5" />
+              </div>
+            ) : copyWorkspaces.length === 0 ? (
+              <div className="py-6 text-center">
+                <p className="text-sm text-muted-foreground">No other workspaces found.</p>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-border divide-y divide-border max-h-60 overflow-auto">
+                {copyWorkspaces.map((w: Workspace) => (
+                  <button
+                    key={w.id}
+                    className="flex items-center justify-between w-full px-4 py-3 text-left hover:bg-accent/50 transition-colors cursor-pointer"
+                    onClick={() => copyVariablesMutation.mutate(w.id)}
+                    disabled={copyVariablesMutation.isPending}
+                  >
+                    <div>
+                      <p className="text-sm font-medium">{w.name}</p>
+                      {w.description && <p className="text-xs text-muted-foreground mt-0.5">{w.description}</p>}
+                    </div>
+                    <Badge variant="outline" className="text-xs shrink-0">{w.environment}</Badge>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => { setShowCopyVars(false); setCopyWorkspaces(null); }}>Cancel</Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

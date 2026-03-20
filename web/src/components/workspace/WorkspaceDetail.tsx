@@ -10,6 +10,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { RunStatusBadge } from "@/components/run/RunStatusBadge";
 import { VariablesPanel } from "@/components/workspace/VariablesPanel";
 import { StateExplorer } from "@/components/workspace/StateExplorer";
+import { OutputsPanel } from "@/components/workspace/OutputsPanel";
 import { AccessPanel } from "@/components/workspace/AccessPanel";
 import { WorkspaceSettings } from "@/components/workspace/WorkspaceSettings";
 import { Pagination } from "@/components/ui/pagination";
@@ -31,6 +32,7 @@ import {
   GitBranch,
   Upload,
   Import,
+  FlaskConical,
   Clock,
   Timer,
   Settings,
@@ -42,15 +44,17 @@ import {
   Users,
   Plus,
   X,
+  FileOutput,
+  Copy,
 } from "lucide-react";
 
 interface Props {
   workspaceId: string;
 }
 
-type Tab = "runs" | "variables" | "state" | "access" | "settings";
+type Tab = "runs" | "variables" | "state" | "outputs" | "access" | "settings";
 
-const validTabs: Tab[] = ["runs", "variables", "state", "access", "settings"];
+const validTabs: Tab[] = ["runs", "variables", "state", "outputs", "access", "settings"];
 
 function getTabFromURL(): Tab {
   const params = new URLSearchParams(window.location.search);
@@ -160,6 +164,46 @@ export function WorkspaceDetail({ workspaceId }: Props) {
     onError: () => toast.error("Failed to unlock workspace"),
   });
 
+  const [showCloneDialog, setShowCloneDialog] = useState(false);
+  const [cloneName, setCloneName] = useState("");
+  const [cloneDescription, setCloneDescription] = useState("");
+  const [cloneEnvironment, setCloneEnvironment] = useState("");
+
+  const cloneMutation = useMutation({
+    mutationFn: async (body: { name: string; description?: string; environment?: string }) => {
+      const { data, error } = await api.POST(
+        "/workspaces/{workspaceId}/clone",
+        {
+          params: { path: { workspaceId } },
+          body,
+        }
+      );
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (ws) => {
+      toast.success("Workspace cloned successfully");
+      window.location.href = `/workspaces/${ws.id}`;
+    },
+    onError: () => toast.error("Failed to clone workspace"),
+  });
+
+  const openCloneDialog = () => {
+    setCloneName("");
+    setCloneDescription(workspace?.description ?? "");
+    setCloneEnvironment(workspace?.environment ?? "development");
+    setShowCloneDialog(true);
+  };
+
+  const handleClone = () => {
+    if (!cloneName.trim()) return;
+    cloneMutation.mutate({
+      name: cloneName.trim(),
+      description: cloneDescription,
+      environment: cloneEnvironment,
+    });
+  };
+
   if (wsLoading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -180,6 +224,7 @@ export function WorkspaceDetail({ workspaceId }: Props) {
     { id: "runs", label: "Runs", icon: ListOrdered },
     { id: "variables", label: "Variables", icon: Key },
     { id: "state", label: "State", icon: Database },
+    { id: "outputs", label: "Outputs", icon: FileOutput },
     { id: "access", label: "Access", icon: Users },
     { id: "settings", label: "Settings", icon: Settings },
   ];
@@ -259,6 +304,26 @@ export function WorkspaceDetail({ workspaceId }: Props) {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={openCloneDialog}
+            >
+              <Copy className="w-4 h-4" />
+              Clone
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => createRunMutation.mutate({ operation: "test" })}
+              disabled={
+                createRunMutation.isPending ||
+                workspace.locked ||
+                (workspace.source === "upload" && !workspace.current_config_version_id)
+              }
+              title="Run smoke-test.sh from the working directory"
+            >
+              <FlaskConical className="w-4 h-4" />
+              Test
+            </Button>
             <Button
               variant="outline"
               onClick={() => setShowImport(true)}
@@ -512,8 +577,79 @@ export function WorkspaceDetail({ workspaceId }: Props) {
 
       {tab === "variables" && <VariablesPanel workspaceId={workspaceId} />}
       {tab === "state" && <StateExplorer workspaceId={workspaceId} />}
+      {tab === "outputs" && <OutputsPanel workspaceId={workspaceId} />}
       {tab === "access" && <AccessPanel workspaceId={workspaceId} />}
       {tab === "settings" && <WorkspaceSettings workspace={workspace} />}
+
+      {/* Clone dialog */}
+      {showCloneDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-card border border-border rounded-xl shadow-lg w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Clone Workspace</h2>
+              <button
+                onClick={() => setShowCloneDialog(false)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Name <span className="text-destructive">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={cloneName}
+                  onChange={(e) => setCloneName(e.target.value)}
+                  placeholder="New workspace name"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  maxLength={128}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Description</label>
+                <textarea
+                  value={cloneDescription}
+                  onChange={(e) => setCloneDescription(e.target.value)}
+                  rows={3}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  maxLength={4096}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Environment</label>
+                <select
+                  value={cloneEnvironment}
+                  onChange={(e) => setCloneEnvironment(e.target.value)}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                >
+                  <option value="development">development</option>
+                  <option value="staging">staging</option>
+                  <option value="production">production</option>
+                </select>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setShowCloneDialog(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleClone}
+                  disabled={!cloneName.trim() || cloneMutation.isPending}
+                >
+                  {cloneMutation.isPending ? <Spinner /> : <Copy className="w-4 h-4" />}
+                  Clone workspace
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

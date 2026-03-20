@@ -204,6 +204,7 @@ func (s *Server) setupRouter() {
 						r.With(auth.RequireRole("admin")).Delete("/", workspaceHandler.Delete)
 						r.With(auth.RequireRole("operator")).Post("/lock", workspaceHandler.Lock)
 						r.With(auth.RequireRole("operator")).Post("/unlock", workspaceHandler.Unlock)
+						r.With(auth.RequireRole("operator")).Post("/clone", workspaceHandler.Clone)
 
 						// Variables
 						r.Route("/variables", func(r chi.Router) {
@@ -212,6 +213,7 @@ func (s *Server) setupRouter() {
 							r.Post("/discover", variableHandler.Discover)
 							r.Post("/bulk", variableHandler.BulkCreate)
 							r.Post("/import-outputs", variableHandler.ImportOutputs)
+							r.Post("/copy", variableHandler.CopyVariables)
 							r.Route("/{variableID}", func(r chi.Router) {
 								r.Put("/", variableHandler.Update)
 								r.Delete("/", variableHandler.Delete)

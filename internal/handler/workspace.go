@@ -43,6 +43,12 @@ type CreateWorkspaceRequest struct {
 	VcsTriggerEnabled bool   `json:"vcs_trigger_enabled"`
 }
 
+type CloneWorkspaceRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Environment string `json:"environment"`
+}
+
 type UpdateWorkspaceRequest struct {
 	Name              string `json:"name"`
 	Description       string `json:"description"`
@@ -372,4 +378,104 @@ func (h *WorkspaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	})
 
 	respond.NoContent(w)
+}
+
+func (h *WorkspaceHandler) Clone(w http.ResponseWriter, r *http.Request) {
+	userCtx := auth.GetUser(r.Context())
+	sourceID := chi.URLParam(r, "workspaceID")
+
+	source, err := h.svc.Get(r.Context(), sourceID, userCtx.OrgID)
+	if err != nil {
+		respond.Error(w, http.StatusNotFound, "workspace not found")
+		return
+	}
+
+	var req CloneWorkspaceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.Name == "" {
+		respond.Error(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if len(req.Name) > 128 {
+		respond.Error(w, http.StatusBadRequest, "name must be at most 128 characters")
+		return
+	}
+	if len(req.Description) > 4096 {
+		respond.Error(w, http.StatusBadRequest, "description must be at most 4096 characters")
+		return
+	}
+	if req.Environment != "" && req.Environment != "development" && req.Environment != "staging" && req.Environment != "production" {
+		respond.Error(w, http.StatusBadRequest, "environment must be development, staging, or production")
+		return
+	}
+
+	// Fall back to source values for optional fields
+	description := req.Description
+	if description == "" {
+		description = source.Description
+	}
+	environment := req.Environment
+	if environment == "" {
+		environment = source.Environment
+	}
+
+	workspace, err := h.svc.Create(r.Context(), service.CreateWorkspaceParams{
+		OrgID:             userCtx.OrgID,
+		Name:              req.Name,
+		Description:       description,
+		Source:            source.Source,
+		RepoURL:           source.RepoURL,
+		RepoBranch:        source.RepoBranch,
+		WorkingDir:        source.WorkingDir,
+		TofuVersion:       source.TofuVersion,
+		Environment:       environment,
+		AutoApply:         source.AutoApply,
+		RequiresApproval:  source.RequiresApproval,
+		VcsTriggerEnabled: source.VcsTriggerEnabled,
+		CreatedBy:         userCtx.UserID,
+	})
+	if err != nil {
+		respond.ErrorWithRequest(w, r, http.StatusInternalServerError, "failed to create cloned workspace")
+		return
+	}
+
+	// Copy variables from source workspace
+	vars, err := h.queries.ListWorkspaceVariables(r.Context(), repository.ListWorkspaceVariablesParams{
+		WorkspaceID: sourceID, OrgID: userCtx.OrgID,
+	})
+	if err != nil {
+		respond.ErrorWithRequest(w, r, http.StatusInternalServerError, "failed to list source variables")
+		return
+	}
+
+	for _, v := range vars {
+		_, err := h.queries.CreateWorkspaceVariable(r.Context(), repository.CreateWorkspaceVariableParams{
+			ID:          ulid.Make().String(),
+			WorkspaceID: workspace.ID,
+			OrgID:       userCtx.OrgID,
+			Key:         v.Key,
+			Value:       v.Value, // copy encrypted value as-is
+			Sensitive:   v.Sensitive,
+			Category:    v.Category,
+			Description: v.Description,
+		})
+		if err != nil {
+			respond.ErrorWithRequest(w, r, http.StatusInternalServerError, "failed to copy variable: "+v.Key)
+			return
+		}
+	}
+
+	ip, ua := auditContext(r)
+	h.auditSvc.Log(r.Context(), service.AuditEntry{
+		OrgID: userCtx.OrgID, UserID: userCtx.UserID,
+		Action: "workspace.clone", EntityType: "workspace", EntityID: workspace.ID,
+		Before: map[string]string{"source_workspace_id": sourceID},
+		After:  workspace, IPAddress: ip, UserAgent: ua,
+	})
+
+	respond.JSON(w, http.StatusCreated, workspace)
 }

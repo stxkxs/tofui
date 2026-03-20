@@ -259,6 +259,19 @@ export interface WorkspaceOutput {
   type: string;
 }
 
+export interface StateOutput {
+  name: string;
+  value: unknown;
+  type: string;
+  sensitive: boolean;
+}
+
+export interface CloneWorkspaceRequest {
+  name: string;
+  description?: string;
+  environment?: string;
+}
+
 export interface DiscoveredVariable {
   name: string;
   type?: string;
@@ -421,6 +434,17 @@ export interface paths {
       };
     };
   };
+  "/workspaces/{workspaceId}/clone": {
+    post: {
+      parameters: { path: { workspaceId: string } };
+      requestBody: {
+        content: { "application/json": CloneWorkspaceRequest };
+      };
+      responses: {
+        201: { content: { "application/json": Workspace } };
+      };
+    };
+  };
   "/workspaces/{workspaceId}/lock": {
     post: {
       parameters: { path: { workspaceId: string } };
@@ -472,6 +496,19 @@ export interface paths {
       requestBody: {
         content: {
           "application/json": { variables: CreateVariableRequest[] };
+        };
+      };
+      responses: {
+        201: { content: { "application/json": WorkspaceVariable[] } };
+      };
+    };
+  };
+  "/workspaces/{workspaceId}/variables/copy": {
+    post: {
+      parameters: { path: { workspaceId: string } };
+      requestBody: {
+        content: {
+          "application/json": { source_workspace_id: string };
         };
       };
       responses: {
@@ -533,7 +570,7 @@ export interface paths {
     get: {
       parameters: { path: { workspaceId: string } };
       responses: {
-        200: { content: { "application/json": WorkspaceOutput[] } };
+        200: { content: { "application/json": StateOutput[] } };
       };
     };
   };

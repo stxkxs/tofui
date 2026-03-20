@@ -450,6 +450,38 @@ paths:
               schema:
                 $ref: "#/components/schemas/Workspace"
 
+  /workspaces/{workspaceId}/clone:
+    post:
+      operationId: cloneWorkspace
+      summary: Clone workspace with variables (operator+)
+      description: Creates a new workspace by cloning settings and variables from an existing workspace. Does not copy config archives, state, or runs.
+      tags: [workspaces]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloneWorkspaceRequest"
+      responses:
+        "201":
+          description: Cloned workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /workspaces/{workspaceId}/upload:
     post:
       operationId: uploadConfiguration
@@ -561,6 +593,48 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /workspaces/{workspaceId}/variables/copy:
+    post:
+      operationId: copyVariables
+      summary: Copy variables from another workspace
+      description: Copies all variables from a source workspace to the target workspace. Variables with the same key and category are updated; others are created. Sensitive values are copied directly (same org encryption key).
+      tags: [variables]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source_workspace_id]
+              properties:
+                source_workspace_id:
+                  type: string
+      responses:
+        "201":
+          description: Copied variables
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkspaceVariable"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Source workspace not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /workspaces/{workspaceId}/variables/{variableId}:
     put:
       operationId: updateVariable
@@ -632,6 +706,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StateVersion"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /workspaces/{workspaceId}/state/current/outputs:
+    get:
+      operationId: getCurrentStateOutputs
+      summary: Get outputs from current state
+      tags: [state]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: List of outputs from current state
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StateOutput"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1087,6 +1182,21 @@ components:
           type: boolean
           default: false
 
+    CloneWorkspaceRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: Name for the cloned workspace
+        description:
+          type: string
+          description: Description (defaults to source workspace description)
+        environment:
+          type: string
+          enum: [development, staging, production]
+          description: Environment (defaults to source workspace environment)
+
     UpdateWorkspaceRequest:
       type: object
       properties:
@@ -1124,7 +1234,7 @@ components:
           type: string
         operation:
           type: string
-          enum: [plan, apply, destroy]
+          enum: [plan, apply, destroy, import, test]
         status:
           type: string
           enum: [pending, queued, planning, planned, awaiting_approval, applying, applied, errored, cancelled, discarded]
@@ -1181,7 +1291,7 @@ components:
       properties:
         operation:
           type: string
-          enum: [plan, apply, destroy]
+          enum: [plan, apply, destroy, import, test]
           default: plan
 
     WorkspaceVariable:
@@ -1264,6 +1374,18 @@ components:
         created_at:
           type: string
           format: date-time
+
+    StateOutput:
+      type: object
+      required: [name, type, sensitive]
+      properties:
+        name:
+          type: string
+        value: {}
+        type:
+          type: string
+        sensitive:
+          type: boolean
 
     Team:
       type: object

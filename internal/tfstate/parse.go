@@ -18,15 +18,17 @@ type TFState struct {
 
 // TFStateOutput represents an output value in the state file.
 type TFStateOutput struct {
-	Value interface{} `json:"value"`
-	Type  interface{} `json:"type"`
+	Value     interface{} `json:"value"`
+	Type      interface{} `json:"type"`
+	Sensitive bool        `json:"sensitive"`
 }
 
 // Output is a simplified output representation returned by the API.
 type Output struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-	Type  string `json:"type"`
+	Name      string      `json:"name"`
+	Value     interface{} `json:"value"`
+	Type      string      `json:"type"`
+	Sensitive bool        `json:"sensitive"`
 }
 
 // TFStateResource represents a resource block in the state file.
@@ -110,30 +112,16 @@ func ParseOutputs(data []byte) ([]Output, error) {
 
 	var outputs []Output
 	for name, out := range state.Outputs {
-		// Convert value to string representation
-		var valueStr string
-		switch v := out.Value.(type) {
-		case string:
-			valueStr = v
-		default:
-			b, _ := json.Marshal(v)
-			valueStr = string(b)
+		typeName := formatOutputType(out.Type)
+		value := out.Value
+		if out.Sensitive {
+			value = nil
 		}
-
-		// Convert type to string
-		var typeStr string
-		switch t := out.Type.(type) {
-		case string:
-			typeStr = t
-		default:
-			b, _ := json.Marshal(t)
-			typeStr = string(b)
-		}
-
 		outputs = append(outputs, Output{
-			Name:  name,
-			Value: valueStr,
-			Type:  typeStr,
+			Name:      name,
+			Value:     value,
+			Type:      typeName,
+			Sensitive: out.Sensitive,
 		})
 	}
 
@@ -141,6 +129,25 @@ func ParseOutputs(data []byte) ([]Output, error) {
 		outputs = []Output{}
 	}
 	return outputs, nil
+}
+
+// formatOutputType converts the type field from a state file into a human-readable string.
+func formatOutputType(t interface{}) string {
+	switch v := t.(type) {
+	case string:
+		return v
+	case []interface{}:
+		if len(v) > 0 {
+			if s, ok := v[0].(string); ok {
+				return s
+			}
+		}
+		b, _ := json.Marshal(v)
+		return string(b)
+	default:
+		b, _ := json.Marshal(v)
+		return string(b)
+	}
 }
 
 // cleanProviderName strips the registry prefix from a provider string.
