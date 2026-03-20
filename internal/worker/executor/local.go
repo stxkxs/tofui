@@ -83,8 +83,19 @@ func (e *LocalExecutor) Execute(ctx context.Context, params ExecuteParams) (*Exe
 		return nil, fmt.Errorf("failed to write variables: %w", err)
 	}
 
-	// Build environment with env variables
-	env := append(os.Environ(), "TF_IN_AUTOMATION=true", "TF_INPUT=false")
+	// Build environment with env variables, filtering out tofui-internal vars
+	// that could interfere with provider SDKs (e.g. S3_ENDPOINT confusing the AWS SDK)
+	var env []string
+	for _, e := range os.Environ() {
+		key := strings.SplitN(e, "=", 2)[0]
+		switch key {
+		case "S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BUCKET", "S3_USE_SSL", "S3_REGION":
+			continue // skip tofui MinIO config
+		default:
+			env = append(env, e)
+		}
+	}
+	env = append(env, "TF_IN_AUTOMATION=true", "TF_INPUT=false")
 
 	// Use plugin cache to avoid re-downloading providers every run
 	if os.Getenv("TF_PLUGIN_CACHE_DIR") == "" {
