@@ -51,7 +51,7 @@ export type RunStatus =
   | "cancelled"
   | "discarded";
 
-export type RunOperation = "plan" | "apply" | "destroy";
+export type RunOperation = "plan" | "apply" | "destroy" | "import" | "test";
 
 export interface Run {
   id: string;

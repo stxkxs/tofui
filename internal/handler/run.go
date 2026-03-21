@@ -110,7 +110,7 @@ func (h *RunHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !isValidOperation(req.Operation) {
-		respond.Error(w, http.StatusBadRequest, "operation must be 'plan', 'apply', 'destroy', or 'import'")
+		respond.Error(w, http.StatusBadRequest, "operation must be 'plan', 'apply', 'destroy', 'import', or 'test'")
 		return
 	}
 
@@ -161,7 +161,7 @@ func (h *RunHandler) Create(w http.ResponseWriter, r *http.Request) {
 // isValidOperation returns whether an operation string is valid.
 func isValidOperation(op string) bool {
 	switch op {
-	case "plan", "apply", "destroy", "import":
+	case "plan", "apply", "destroy", "import", "test":
 		return true
 	default:
 		return false

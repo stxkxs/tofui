@@ -19,7 +19,8 @@ CREATE TYPE run_operation AS ENUM (
     'plan',
     'apply',
     'destroy',
-    'import'
+    'import',
+    'test'
 );
 
 CREATE TYPE user_role AS ENUM (

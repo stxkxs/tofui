@@ -277,6 +277,16 @@ func (e *KubernetesExecutor) buildScript(params ExecuteParams) string {
 	sb.WriteString("if [ -f tofui.auto.tfvars ]; then VAR_FILE='-var-file=tofui.auto.tfvars'; fi\n\n")
 
 	switch params.Operation {
+	case "test":
+		sb.WriteString("echo '$ tofu output -json'\n")
+		sb.WriteString("tofu output -json > outputs.json 2>/dev/null || echo 'Warning: tofu output failed (continuing anyway)'\n\n")
+		sb.WriteString("if [ ! -f smoke-test.sh ]; then\n")
+		sb.WriteString("  echo 'smoke-test.sh not found in working directory'\n")
+		sb.WriteString("  exit 1\n")
+		sb.WriteString("fi\n")
+		sb.WriteString("chmod +x smoke-test.sh\n")
+		sb.WriteString("echo '$ ./smoke-test.sh'\n")
+		sb.WriteString("./smoke-test.sh\n")
 	case "plan":
 		sb.WriteString("echo '$ tofu plan'\n")
 		// -detailed-exitcode: 0=no changes, 1=error, 2=changes detected

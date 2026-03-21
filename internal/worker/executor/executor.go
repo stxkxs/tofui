@@ -19,7 +19,7 @@ type ImportResource struct {
 type ExecuteParams struct {
 	RunID       string
 	WorkspaceID string
-	Operation   string // "plan", "apply", "destroy", "import"
+	Operation   string // "plan", "apply", "destroy", "import", "test"
 	RepoURL     string
 	RepoBranch  string
 	WorkingDir  string

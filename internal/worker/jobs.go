@@ -86,7 +86,7 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 
 	// Update run status
 	status := "planning"
-	if args.Operation == "apply" || args.Operation == "destroy" || args.Operation == "import" {
+	if args.Operation == "apply" || args.Operation == "destroy" || args.Operation == "import" || args.Operation == "test" {
 		status = "applying"
 	}
 	if _, err := w.queries.UpdateRunStarted(ctx, repository.UpdateRunStartedParams{ID: args.RunID, Status: status}); err != nil {
@@ -219,6 +219,8 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 	finalStatus := "planned"
 	if args.Operation == "apply" || args.Operation == "destroy" || args.Operation == "import" {
 		finalStatus = "applied"
+	} else if args.Operation == "test" {
+		finalStatus = "applied" // test is terminal — "applied" prevents approval flow
 	} else if args.Operation == "plan" {
 		finalStatus = postPlanAction(workspace.AutoApply, workspace.RequiresApproval)
 	}
@@ -232,7 +234,7 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 		} else {
 			planLog := &logURL
 			var applyLog *string
-			if args.Operation != "plan" {
+			if args.Operation != "plan" && args.Operation != "test" {
 				applyLog = planLog
 				planLog = nil
 			}

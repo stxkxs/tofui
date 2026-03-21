@@ -128,6 +128,67 @@ func (e *LocalExecutor) Execute(ctx context.Context, params ExecuteParams) (*Exe
 	var tfArgs []string
 
 	switch params.Operation {
+	case "test":
+		// Export outputs to JSON for smoke-test.sh
+		params.LogCallback([]byte("\033[1m$ tofu output -json\033[0m\r\n"))
+		outputCmd := exec.CommandContext(ctx, "tofu", "output", "-json")
+		outputCmd.Dir = tfDir
+		outputCmd.Env = env
+		outputJSON, outputErr := outputCmd.Output()
+		if outputErr != nil {
+			params.LogCallback([]byte(fmt.Sprintf("\033[33mWarning: tofu output failed: %s (continuing anyway)\033[0m\r\n", outputErr)))
+		} else {
+			outputsPath := filepath.Join(tfDir, "outputs.json")
+			if err := os.WriteFile(outputsPath, outputJSON, 0600); err != nil {
+				return nil, fmt.Errorf("failed to write outputs.json: %w", err)
+			}
+			params.LogCallback([]byte("Outputs written to outputs.json\r\n"))
+		}
+		params.LogCallback([]byte("\r\n"))
+
+		// Execute smoke-test.sh
+		smokeTestPath := filepath.Join(tfDir, "smoke-test.sh")
+		if _, err := os.Stat(smokeTestPath); os.IsNotExist(err) {
+			return nil, fmt.Errorf("smoke-test.sh not found in working directory")
+		}
+		// Ensure executable
+		os.Chmod(smokeTestPath, 0755)
+
+		params.LogCallback([]byte("\033[1m$ ./smoke-test.sh\033[0m\r\n"))
+
+		testCmd := exec.CommandContext(ctx, "/bin/sh", smokeTestPath)
+		testCmd.Dir = tfDir
+		testCmd.Env = env
+
+		testStdout, err := testCmd.StdoutPipe()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
+		}
+		testCmd.Stderr = testCmd.Stdout
+
+		if err := testCmd.Start(); err != nil {
+			return nil, fmt.Errorf("failed to start smoke-test.sh: %w", err)
+		}
+
+		var testOutputBuf strings.Builder
+		scanner := bufio.NewScanner(testStdout)
+		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			line := scanner.Text()
+			testOutputBuf.WriteString(line)
+			testOutputBuf.WriteString("\n")
+			params.LogCallback([]byte(line + "\r\n"))
+		}
+
+		if err := testCmd.Wait(); err != nil {
+			result.Output = testOutputBuf.String()
+			return result, fmt.Errorf("smoke-test.sh failed: %w", err)
+		}
+
+		result.Output = testOutputBuf.String()
+		params.LogCallback([]byte("\r\n\033[32mSmoke test passed.\033[0m\r\n"))
+		return result, nil
+
 	case "import":
 		params.LogCallback([]byte("\033[1m$ tofu import\033[0m\r\n"))
 		for _, res := range params.ImportResources {
