@@ -12,10 +12,12 @@ import { Pagination } from "@/components/ui/pagination";
 import { CreateWorkspaceDialog } from "./CreateWorkspaceDialog";
 import { formatRelativeTime, getEnvironmentColor } from "@/lib/utils";
 import type { RunStatus } from "@/api/types";
+import { Link } from "@/components/ui/link";
 import {
   Plus,
   GitBranch,
   FolderGit2,
+  Upload,
   Clock,
   Lock,
   Zap,
@@ -151,7 +153,7 @@ export function WorkspaceList() {
         <>
           <div className="grid gap-3" role="list" aria-label="Workspaces">
             {data.data.map((workspace: Workspace) => (
-              <a
+              <Link
                 key={workspace.id}
                 href={`/workspaces/${workspace.id}`}
                 role="listitem"
@@ -193,9 +195,15 @@ export function WorkspaceList() {
                       <p className="text-sm text-muted-foreground mb-3 line-clamp-1">{workspace.description}</p>
                     )}
                     <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1.5">
-                        <GitBranch className="w-3.5 h-3.5" />{workspace.repo_branch}
-                      </span>
+                      {workspace.source === "upload" ? (
+                        <span className="flex items-center gap-1.5">
+                          <Upload className="w-3.5 h-3.5" />Upload
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1.5">
+                          <GitBranch className="w-3.5 h-3.5" />{workspace.repo_branch}
+                        </span>
+                      )}
                       <span className="flex items-center gap-1.5">
                         <span className="font-mono">tofu {workspace.tofu_version}</span>
                       </span>
@@ -210,7 +218,7 @@ export function WorkspaceList() {
                     </div>
                   </div>
                 </div>
-              </a>
+              </Link>
             ))}
           </div>
           <Pagination page={page} perPage={20} total={data.total} onPageChange={setPage} />

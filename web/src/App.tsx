@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ErrorFallback } from "@/components/ErrorFallback";
@@ -11,42 +10,34 @@ import { TeamsPage } from "@/components/teams/TeamsPage";
 import { UsersPage } from "@/components/users/UsersPage";
 import { AuditLogPage } from "@/components/audit/AuditLogPage";
 import { useAuth } from "@/hooks/useAuth";
+import { useLocation, navigate } from "@/hooks/useNavigate";
 import { Spinner } from "@/components/ui/spinner";
 import { FileQuestion } from "lucide-react";
+import { Link } from "@/components/ui/link";
 
-function useRoute() {
-  return useMemo(() => {
-    const path = window.location.pathname;
+function resolveRoute(location: string) {
+  const path = location.split("?")[0];
 
-    if (path === "/login") return { page: "login" as const };
-    if (path === "/auth/callback") return { page: "callback" as const };
+  if (path === "/login") return { page: "login" as const };
+  if (path === "/auth/callback") return { page: "callback" as const };
 
-    // /workspaces/:id/runs/:runId
-    const runMatch = path.match(/^\/workspaces\/([^/]+)\/runs\/([^/]+)/);
-    if (runMatch)
-      return {
-        page: "run" as const,
-        workspaceId: runMatch[1],
-        runId: runMatch[2],
-      };
+  const runMatch = path.match(/^\/workspaces\/([^/]+)\/runs\/([^/]+)/);
+  if (runMatch)
+    return {
+      page: "run" as const,
+      workspaceId: runMatch[1],
+      runId: runMatch[2],
+    };
 
-    // /workspaces/:id
-    const wsMatch = path.match(/^\/workspaces\/([^/]+)/);
-    if (wsMatch)
-      return { page: "workspace" as const, workspaceId: wsMatch[1] };
+  const wsMatch = path.match(/^\/workspaces\/([^/]+)/);
+  if (wsMatch)
+    return { page: "workspace" as const, workspaceId: wsMatch[1] };
 
-    // /teams
-    if (path === "/teams") return { page: "teams" as const };
-
-    // /users
-    if (path === "/users") return { page: "users" as const };
-
-    // /audit-logs
-    if (path === "/audit-logs") return { page: "audit-logs" as const };
-
-    if (path === "/") return { page: "home" as const };
-    return { page: "not-found" as const };
-  }, []);
+  if (path === "/teams") return { page: "teams" as const };
+  if (path === "/users") return { page: "users" as const };
+  if (path === "/audit-logs") return { page: "audit-logs" as const };
+  if (path === "/") return { page: "home" as const };
+  return { page: "not-found" as const };
 }
 
 function NotFoundPage() {
@@ -57,18 +48,19 @@ function NotFoundPage() {
       <p className="text-sm text-muted-foreground mb-4">
         The page you're looking for doesn't exist.
       </p>
-      <a
+      <Link
         href="/"
         className="text-sm text-primary hover:underline"
       >
         Back to dashboard
-      </a>
+      </Link>
     </div>
   );
 }
 
 export function App() {
-  const route = useRoute();
+  const location = useLocation();
+  const route = resolveRoute(location);
   const { user, isLoading } = useAuth();
 
   // Public routes
@@ -86,7 +78,7 @@ export function App() {
 
   // Not logged in
   if (!user) {
-    window.location.href = "/login";
+    navigate("/login");
     return null;
   }
 

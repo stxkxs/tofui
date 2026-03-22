@@ -10,6 +10,8 @@ func TestIsValidOperation(t *testing.T) {
 		{"plan", true},
 		{"apply", true},
 		{"destroy", true},
+		{"import", true},
+		{"test", true},
 		{"", false},
 		{"init", false},
 		{"refresh", false},

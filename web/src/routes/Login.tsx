@@ -1,10 +1,18 @@
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Box } from "lucide-react";
 
 export function LoginPage() {
-  const handleGitHubLogin = () => {
-    window.location.href = "/api/v1/auth/github";
-  };
+  const [devLogin, setDevLogin] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/v1/health")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.dev_login) setDevLogin(true);
+      })
+      .catch(() => {});
+  }, []);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">
@@ -19,9 +27,9 @@ export function LoginPage() {
           </p>
         </div>
 
-        <div className="rounded-xl border border-border bg-card p-6">
+        <div className="rounded-xl border border-border bg-card p-6 space-y-3">
           <Button
-            onClick={handleGitHubLogin}
+            onClick={() => { window.location.href = "/api/v1/auth/github"; }}
             className="w-full"
             size="lg"
           >
@@ -30,6 +38,17 @@ export function LoginPage() {
             </svg>
             Sign in with GitHub
           </Button>
+
+          {devLogin && (
+            <Button
+              onClick={() => { window.location.href = "/api/v1/auth/dev"; }}
+              variant="outline"
+              className="w-full"
+              size="lg"
+            >
+              Dev Login
+            </Button>
+          )}
         </div>
 
         <p className="text-center text-xs text-muted-foreground mt-6">

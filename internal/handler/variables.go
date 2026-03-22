@@ -1,13 +1,19 @@
 package handler
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -18,7 +24,9 @@ import (
 	"github.com/stxkxs/tofui/internal/repository"
 	"github.com/stxkxs/tofui/internal/secrets"
 	"github.com/stxkxs/tofui/internal/service"
+	"github.com/stxkxs/tofui/internal/storage"
 	"github.com/stxkxs/tofui/internal/tfparse"
+	"github.com/stxkxs/tofui/internal/tfstate"
 )
 
 type VariableHandler struct {
@@ -26,10 +34,11 @@ type VariableHandler struct {
 	encryptor    *secrets.Encryptor
 	auditSvc     *service.AuditService
 	workspaceSvc *service.WorkspaceService
+	storage      *storage.S3Storage
 }
 
-func NewVariableHandler(queries *repository.Queries, encryptor *secrets.Encryptor, auditSvc *service.AuditService, workspaceSvc *service.WorkspaceService) *VariableHandler {
-	return &VariableHandler{queries: queries, encryptor: encryptor, auditSvc: auditSvc, workspaceSvc: workspaceSvc}
+func NewVariableHandler(queries *repository.Queries, encryptor *secrets.Encryptor, auditSvc *service.AuditService, workspaceSvc *service.WorkspaceService, store *storage.S3Storage) *VariableHandler {
+	return &VariableHandler{queries: queries, encryptor: encryptor, auditSvc: auditSvc, workspaceSvc: workspaceSvc, storage: store}
 }
 
 type CreateVariableRequest struct {
@@ -245,11 +254,6 @@ func (h *VariableHandler) Discover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ws.RepoURL == "" {
-		respond.Error(w, http.StatusBadRequest, "workspace has no repository URL configured")
-		return
-	}
-
 	tmpDir, err := os.MkdirTemp("", "tofui-discover-*")
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, "failed to create temp directory")
@@ -257,14 +261,40 @@ func (h *VariableHandler) Discover(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
+	if ws.Source == "upload" {
+		// Extract config archive from S3
+		if ws.CurrentConfigVersionID == "" {
+			respond.Error(w, http.StatusBadRequest, "no configuration uploaded yet")
+			return
+		}
+		if h.storage == nil {
+			respond.Error(w, http.StatusServiceUnavailable, "storage not configured")
+			return
+		}
+		key := fmt.Sprintf("configs/%s/%s.tar.gz", workspaceID, ws.CurrentConfigVersionID)
+		data, err := h.storage.GetConfigArchive(r.Context(), key)
+		if err != nil {
+			respond.Error(w, http.StatusInternalServerError, "failed to download configuration")
+			return
+		}
+		if err := extractDiscoverArchive(data, tmpDir); err != nil {
+			respond.Error(w, http.StatusInternalServerError, "failed to extract configuration")
+			return
+		}
+	} else {
+		if ws.RepoURL == "" {
+			respond.Error(w, http.StatusBadRequest, "workspace has no repository URL configured")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--branch", ws.RepoBranch, ws.RepoURL, tmpDir)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		slog.Error("git clone failed", "error", err, "output", string(output), "repo", ws.RepoURL)
-		respond.Error(w, http.StatusBadGateway, "failed to clone repository")
-		return
+		cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--branch", ws.RepoBranch, ws.RepoURL, tmpDir)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			slog.Error("git clone failed", "error", err, "output", string(output), "repo", ws.RepoURL)
+			respond.Error(w, http.StatusBadGateway, "failed to clone repository")
+			return
+		}
 	}
 
 	parseDir := tmpDir
@@ -304,6 +334,43 @@ func (h *VariableHandler) Discover(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond.JSON(w, http.StatusOK, result)
+}
+
+func extractDiscoverArchive(data []byte, destDir string) error {
+	gr, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("invalid gzip: %w", err)
+	}
+	defer gr.Close()
+
+	tr := tar.NewReader(gr)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		cleanName := filepath.Clean(hdr.Name)
+		if strings.HasPrefix(cleanName, "..") {
+			continue
+		}
+		target := filepath.Join(destDir, cleanName)
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			os.MkdirAll(target, 0755)
+		case tar.TypeReg:
+			os.MkdirAll(filepath.Dir(target), 0755)
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode))
+			if err != nil {
+				return err
+			}
+			io.Copy(f, tr)
+			f.Close()
+		}
+	}
+	return nil
 }
 
 type BulkCreateVariablesRequest struct {
@@ -395,6 +462,242 @@ func (h *VariableHandler) BulkCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond.JSON(w, http.StatusCreated, created)
+}
+
+type ImportOutputsRequest struct {
+	SourceWorkspaceID string `json:"source_workspace_id"`
+}
+
+func (h *VariableHandler) ImportOutputs(w http.ResponseWriter, r *http.Request) {
+	userCtx := auth.GetUser(r.Context())
+	workspaceID := chi.URLParam(r, "workspaceID")
+
+	var req ImportOutputsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.SourceWorkspaceID == "" {
+		respond.Error(w, http.StatusBadRequest, "source_workspace_id is required")
+		return
+	}
+
+	if h.storage == nil {
+		respond.Error(w, http.StatusServiceUnavailable, "storage not configured")
+		return
+	}
+
+	// Get latest state from the source workspace
+	sv, err := h.queries.GetLatestStateVersion(r.Context(), repository.GetLatestStateVersionParams{
+		WorkspaceID: req.SourceWorkspaceID, OrgID: userCtx.OrgID,
+	})
+	if err != nil {
+		respond.Error(w, http.StatusNotFound, "source workspace has no state")
+		return
+	}
+
+	data, err := h.storage.GetState(r.Context(), sv.StateURL)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to fetch source state")
+		return
+	}
+
+	outputs, err := tfstate.ParseOutputs(data)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to parse source outputs")
+		return
+	}
+
+	if len(outputs) == 0 {
+		respond.Error(w, http.StatusBadRequest, "source workspace has no outputs")
+		return
+	}
+
+	// Get existing variables to detect duplicates
+	existing, err := h.queries.ListWorkspaceVariables(r.Context(), repository.ListWorkspaceVariablesParams{
+		WorkspaceID: workspaceID, OrgID: userCtx.OrgID,
+	})
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to list existing variables")
+		return
+	}
+	existingByKey := make(map[string]repository.WorkspaceVariable, len(existing))
+	for _, v := range existing {
+		if v.Category == "terraform" {
+			existingByKey[v.Key] = v
+		}
+	}
+
+	// Create or update variables from outputs
+	ip, ua := auditContext(r)
+	var result []repository.WorkspaceVariable
+	for _, out := range outputs {
+		desc := fmt.Sprintf("Imported from workspace output (%s)", out.Type)
+
+		// Convert output value to string for variable storage
+		var valueStr string
+		switch v := out.Value.(type) {
+		case string:
+			valueStr = v
+		default:
+			b, _ := json.Marshal(v)
+			valueStr = string(b)
+		}
+
+		if ev, exists := existingByKey[out.Name]; exists {
+			// Update existing variable with the output value
+			v, err := h.queries.UpdateWorkspaceVariable(r.Context(), repository.UpdateWorkspaceVariableParams{
+				ID: ev.ID, OrgID: userCtx.OrgID, Value: valueStr, Sensitive: false, Description: desc,
+			})
+			if err != nil {
+				continue
+			}
+			auditVar := v
+			auditVar.Value = "***"
+			h.auditSvc.Log(r.Context(), service.AuditEntry{
+				OrgID: userCtx.OrgID, UserID: userCtx.UserID,
+				Action: "variable.import", EntityType: "variable", EntityID: v.ID,
+				After: auditVar, IPAddress: ip, UserAgent: ua,
+			})
+			result = append(result, v)
+		} else {
+			// Create new variable
+			v, err := h.queries.CreateWorkspaceVariable(r.Context(), repository.CreateWorkspaceVariableParams{
+				ID:          ulid.Make().String(),
+				WorkspaceID: workspaceID,
+				OrgID:       userCtx.OrgID,
+				Key:         out.Name,
+				Value:       valueStr,
+				Sensitive:   false,
+				Category:    "terraform",
+				Description: desc,
+			})
+			if err != nil {
+				continue
+			}
+			auditVar := v
+			auditVar.Value = "***"
+			h.auditSvc.Log(r.Context(), service.AuditEntry{
+				OrgID: userCtx.OrgID, UserID: userCtx.UserID,
+				Action: "variable.import", EntityType: "variable", EntityID: v.ID,
+				After: auditVar, IPAddress: ip, UserAgent: ua,
+			})
+			result = append(result, v)
+		}
+	}
+
+	respond.JSON(w, http.StatusCreated, result)
+}
+
+type CopyVariablesRequest struct {
+	SourceWorkspaceID string `json:"source_workspace_id"`
+}
+
+func (h *VariableHandler) CopyVariables(w http.ResponseWriter, r *http.Request) {
+	userCtx := auth.GetUser(r.Context())
+	workspaceID := chi.URLParam(r, "workspaceID")
+
+	var req CopyVariablesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.SourceWorkspaceID == "" {
+		respond.Error(w, http.StatusBadRequest, "source_workspace_id is required")
+		return
+	}
+
+	if req.SourceWorkspaceID == workspaceID {
+		respond.Error(w, http.StatusBadRequest, "source and target workspace must be different")
+		return
+	}
+
+	// Verify source workspace belongs to same org
+	_, err := h.workspaceSvc.Get(r.Context(), req.SourceWorkspaceID, userCtx.OrgID)
+	if err != nil {
+		respond.Error(w, http.StatusNotFound, "source workspace not found")
+		return
+	}
+
+	// List source variables
+	sourceVars, err := h.queries.ListWorkspaceVariables(r.Context(), repository.ListWorkspaceVariablesParams{
+		WorkspaceID: req.SourceWorkspaceID, OrgID: userCtx.OrgID,
+	})
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to list source variables")
+		return
+	}
+
+	if len(sourceVars) == 0 {
+		respond.Error(w, http.StatusBadRequest, "source workspace has no variables")
+		return
+	}
+
+	// List target's existing variables, build map keyed by key+category
+	targetVars, err := h.queries.ListWorkspaceVariables(r.Context(), repository.ListWorkspaceVariablesParams{
+		WorkspaceID: workspaceID, OrgID: userCtx.OrgID,
+	})
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to list target variables")
+		return
+	}
+
+	existingByKey := make(map[string]repository.WorkspaceVariable, len(targetVars))
+	for _, v := range targetVars {
+		existingByKey[v.Key+"|"+v.Category] = v
+	}
+
+	ip, ua := auditContext(r)
+	copied := make([]repository.WorkspaceVariable, 0, len(sourceVars))
+
+	for _, sv := range sourceVars {
+		compositeKey := sv.Key + "|" + sv.Category
+
+		var v repository.WorkspaceVariable
+		if existing, ok := existingByKey[compositeKey]; ok {
+			// Update existing variable — copy encrypted value directly (same org key)
+			v, err = h.queries.UpdateWorkspaceVariable(r.Context(), repository.UpdateWorkspaceVariableParams{
+				ID: existing.ID, OrgID: userCtx.OrgID,
+				Value: sv.Value, Sensitive: sv.Sensitive, Description: sv.Description,
+			})
+			if err != nil {
+				respond.Error(w, http.StatusInternalServerError, "failed to update variable: "+sv.Key)
+				return
+			}
+		} else {
+			// Create new variable — copy encrypted value directly (same org key)
+			v, err = h.queries.CreateWorkspaceVariable(r.Context(), repository.CreateWorkspaceVariableParams{
+				ID:          ulid.Make().String(),
+				WorkspaceID: workspaceID,
+				OrgID:       userCtx.OrgID,
+				Key:         sv.Key,
+				Value:       sv.Value,
+				Sensitive:   sv.Sensitive,
+				Category:    sv.Category,
+				Description: sv.Description,
+			})
+			if err != nil {
+				respond.Error(w, http.StatusInternalServerError, "failed to create variable: "+sv.Key)
+				return
+			}
+		}
+
+		auditVar := v
+		auditVar.Value = "***"
+		h.auditSvc.Log(r.Context(), service.AuditEntry{
+			OrgID: userCtx.OrgID, UserID: userCtx.UserID,
+			Action: "variable.copy", EntityType: "variable", EntityID: v.ID,
+			After: auditVar, IPAddress: ip, UserAgent: ua,
+		})
+
+		if v.Sensitive {
+			v.Value = "***"
+		}
+		copied = append(copied, v)
+	}
+
+	respond.JSON(w, http.StatusCreated, copied)
 }
 
 func (h *VariableHandler) RevealValue(w http.ResponseWriter, r *http.Request) {

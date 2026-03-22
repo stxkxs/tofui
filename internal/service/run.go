@@ -36,6 +36,7 @@ type CreateRunParams struct {
 	Operation   string
 	CreatedBy   string
 	CommitSHA   string
+	Imports     []worker.ImportResource
 }
 
 func (s *RunService) List(ctx context.Context, workspaceID, orgID string, page, perPage int) ([]any, int64, error) {
@@ -107,6 +108,7 @@ func (s *RunService) Create(ctx context.Context, params CreateRunParams) (reposi
 				WorkspaceID: params.WorkspaceID,
 				OrgID:       params.OrgID,
 				Operation:   params.Operation,
+				Imports:     params.Imports,
 			}, nil)
 			if err != nil {
 				return run, fmt.Errorf("run %s created but failed to enqueue job: %w", runID, err)

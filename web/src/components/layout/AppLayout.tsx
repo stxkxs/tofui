@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { useLocation } from "@/hooks/useNavigate";
+import { Link } from "@/components/ui/link";
 import {
   LayoutDashboard,
   LogOut,
@@ -11,68 +13,70 @@ import {
 
 export function AppLayout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
+  const location = useLocation();
+  const path = location.split("?")[0];
 
   return (
     <div className="h-screen flex">
       {/* Sidebar */}
       <aside className="w-60 border-r border-border bg-card flex flex-col" aria-label="Main navigation">
         <div className="p-4 border-b border-border">
-          <a href="/" className="flex items-center gap-2.5">
+          <Link href="/" className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
               <Box className="w-4.5 h-4.5 text-primary-foreground" />
             </div>
             <span className="font-bold text-lg tracking-tight">tofui</span>
-          </a>
+          </Link>
         </div>
 
         <nav className="flex-1 p-3 space-y-1" aria-label="Primary">
-          <a
+          <Link
             href="/"
             className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-              window.location.pathname === "/" || window.location.pathname.startsWith("/workspaces")
+              path === "/" || path.startsWith("/workspaces")
                 ? "text-foreground bg-accent/50"
                 : "text-muted-foreground hover:text-foreground hover:bg-accent/30"
             }`}
           >
             <LayoutDashboard className="w-4 h-4" />
             Workspaces
-          </a>
-          <a
+          </Link>
+          <Link
             href="/teams"
             className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-              window.location.pathname === "/teams"
+              path === "/teams"
                 ? "text-foreground bg-accent/50"
                 : "text-muted-foreground hover:text-foreground hover:bg-accent/30"
             }`}
           >
             <Users className="w-4 h-4" />
             Teams
-          </a>
+          </Link>
           {(user?.role === "admin" || user?.role === "owner") && (
-            <a
+            <Link
               href="/users"
               className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                window.location.pathname === "/users"
+                path === "/users"
                   ? "text-foreground bg-accent/50"
                   : "text-muted-foreground hover:text-foreground hover:bg-accent/30"
               }`}
             >
               <UserCog className="w-4 h-4" />
               Users
-            </a>
+            </Link>
           )}
           {(user?.role === "admin" || user?.role === "owner") && (
-            <a
+            <Link
               href="/audit-logs"
               className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                window.location.pathname === "/audit-logs"
+                path === "/audit-logs"
                   ? "text-foreground bg-accent/50"
                   : "text-muted-foreground hover:text-foreground hover:bg-accent/30"
               }`}
             >
               <Shield className="w-4 h-4" />
               Audit Logs
-            </a>
+            </Link>
           )}
         </nav>
 

@@ -1,8 +1,10 @@
+# -- Replica counts for each component
 replicaCount:
   server: 1
-  worker: 1
+  worker: 1   # Only 1 worker recommended — River handles concurrency internally
   web: 1
 
+# -- Container images
 image:
   server:
     repository: tofui/server
@@ -21,38 +23,56 @@ image:
     tag: latest
     pullPolicy: IfNotPresent
 
+# -- Application configuration
+# Secrets (jwtSecret, encryptionKey, githubClientSecret, webhookSecret, S3 creds)
+# are stored in a Kubernetes Secret. Everything else goes in a ConfigMap.
 config:
+  # Server
   serverAddr: ":8080"
-  serverBaseURL: "http://localhost:8080"
-  webURL: "http://localhost:5173"
-  environment: "development"
-  jwtSecret: "dev-secret-change-in-production"
-  encryptionKey: "dev-encryption-key-32bytes!!!!!!"
-  executorType: "local"
-  workerConcurrency: "10"
+  serverBaseURL: "http://localhost:8080"      # Public URL — set to your domain in production
+  webURL: "http://localhost:5173"             # Frontend URL — set to your domain in production
+  environment: "development"                  # "development" | "staging" | "production"
+  logLevel: "info"                            # "debug" | "info" | "warn" | "error"
+  shutdownTimeout: "15s"
+
+  # Auth — create a GitHub OAuth App and set these
   githubClientID: ""
   githubClientSecret: ""
-  webhookSecret: ""
-  s3Region: "us-east-1"
+
+  # Security — MUST change these in production
+  jwtSecret: "dev-secret-change-in-production"
   jwtExpiration: "24h"
-  shutdownTimeout: "15s"
-  executorNamespace: "tofui"
-  executorImage: "tofui-executor:tofu-1.11"
+  encryptionKey: "dev-encryption-key-32bytes!!!!!!"  # Must be exactly 32 bytes
+  webhookSecret: ""                                   # HMAC secret for GitHub webhooks
+
+  # Executor — "local" runs tofu on the worker host, "kubernetes" uses ephemeral pods
+  executorType: "local"
+  executorNamespace: "tofui"                  # K8s namespace for executor pods
+  executorImage: "tofui-executor:tofu-1.11"   # Default executor image
+
+  # Worker
+  workerConcurrency: "10"
   workerHealthAddr: ":8081"
-  logLevel: "info"
+
+  # S3 — region only, creds come from the minio subchart values below
+  s3Region: "us-east-1"
+
+  # Database tuning
   dbMaxConns: "25"
   dbMinConns: "5"
 
+# -- PostgreSQL subchart (Bitnami)
 postgresql:
   enabled: true
   auth:
     username: tofui
-    password: tofui
+    password: tofui          # Change in production
     database: tofui
   primary:
     persistence:
       size: 1Gi
 
+# -- Redis subchart (Bitnami)
 redis:
   enabled: true
   architecture: standalone
@@ -62,15 +82,17 @@ redis:
     persistence:
       size: 256Mi
 
+# -- MinIO subchart (Bitnami)
 minio:
   enabled: true
   auth:
-    rootUser: minioadmin
-    rootPassword: minioadmin
+    rootUser: minioadmin      # Change in production
+    rootPassword: minioadmin  # Change in production
   defaultBuckets: tofui
   persistence:
     size: 1Gi
 
+# -- Ingress
 ingress:
   enabled: false
   className: nginx
@@ -79,7 +101,12 @@ ingress:
       paths:
         - path: /
           pathType: Prefix
+  # tls:
+  #   - secretName: tofui-tls
+  #     hosts:
+  #       - tofui.example.com
 
+# -- Resource limits
 resources:
   server:
     limits:

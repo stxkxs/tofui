@@ -7,11 +7,14 @@ package repository
 
 import "context"
 
-const workspaceColumns = `id, org_id, name, description, repo_url, repo_branch, working_dir, tofu_version, environment, auto_apply, requires_approval, vcs_trigger_enabled, locked, locked_by, current_run_id, created_by, created_at, updated_at`
+const workspaceColumns = `id, org_id, name, description, repo_url, repo_branch, working_dir, tofu_version, environment, auto_apply, requires_approval, vcs_trigger_enabled, locked, locked_by, current_run_id, created_by, source, current_config_version_id, created_at, updated_at`
+
+// workspaceColumnsQualified uses the "w." table alias, needed for joins that introduce ambiguous column names.
+const workspaceColumnsQualified = `w.id, w.org_id, w.name, w.description, w.repo_url, w.repo_branch, w.working_dir, w.tofu_version, w.environment, w.auto_apply, w.requires_approval, w.vcs_trigger_enabled, w.locked, w.locked_by, w.current_run_id, w.created_by, w.source, w.current_config_version_id, w.created_at, w.updated_at`
 
 func scanWorkspace(row interface{ Scan(...interface{}) error }) (Workspace, error) {
 	var w Workspace
-	err := row.Scan(&w.ID, &w.OrgID, &w.Name, &w.Description, &w.RepoURL, &w.RepoBranch, &w.WorkingDir, &w.TofuVersion, &w.Environment, &w.AutoApply, &w.RequiresApproval, &w.VcsTriggerEnabled, &w.Locked, &w.LockedBy, &w.CurrentRunID, &w.CreatedBy, &w.CreatedAt, &w.UpdatedAt)
+	err := row.Scan(&w.ID, &w.OrgID, &w.Name, &w.Description, &w.RepoURL, &w.RepoBranch, &w.WorkingDir, &w.TofuVersion, &w.Environment, &w.AutoApply, &w.RequiresApproval, &w.VcsTriggerEnabled, &w.Locked, &w.LockedBy, &w.CurrentRunID, &w.CreatedBy, &w.Source, &w.CurrentConfigVersionID, &w.CreatedAt, &w.UpdatedAt)
 	return w, err
 }
 
@@ -81,14 +84,31 @@ type CreateWorkspaceParams struct {
 	RequiresApproval  bool   `json:"requires_approval"`
 	VcsTriggerEnabled bool   `json:"vcs_trigger_enabled"`
 	CreatedBy         string `json:"created_by"`
+	Source            string `json:"source"`
 }
 
 func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams) (Workspace, error) {
 	row := q.db.QueryRow(ctx,
-		`INSERT INTO workspaces (id, org_id, name, description, repo_url, repo_branch, working_dir, tofu_version, environment, auto_apply, requires_approval, vcs_trigger_enabled, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		`INSERT INTO workspaces (id, org_id, name, description, repo_url, repo_branch, working_dir, tofu_version, environment, auto_apply, requires_approval, vcs_trigger_enabled, created_by, source)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING `+workspaceColumns,
-		arg.ID, arg.OrgID, arg.Name, arg.Description, arg.RepoURL, arg.RepoBranch, arg.WorkingDir, arg.TofuVersion, arg.Environment, arg.AutoApply, arg.RequiresApproval, arg.VcsTriggerEnabled, arg.CreatedBy,
+		arg.ID, arg.OrgID, arg.Name, arg.Description, arg.RepoURL, arg.RepoBranch, arg.WorkingDir, arg.TofuVersion, arg.Environment, arg.AutoApply, arg.RequiresApproval, arg.VcsTriggerEnabled, arg.CreatedBy, arg.Source,
+	)
+	return scanWorkspace(row)
+}
+
+type SetWorkspaceConfigVersionParams struct {
+	ID                     string `json:"id"`
+	OrgID                  string `json:"org_id"`
+	CurrentConfigVersionID string `json:"current_config_version_id"`
+}
+
+func (q *Queries) SetWorkspaceConfigVersion(ctx context.Context, arg SetWorkspaceConfigVersionParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx,
+		`UPDATE workspaces SET current_config_version_id = $3, updated_at = NOW()
+		WHERE id = $1 AND org_id = $2
+		RETURNING `+workspaceColumns,
+		arg.ID, arg.OrgID, arg.CurrentConfigVersionID,
 	)
 	return scanWorkspace(row)
 }
@@ -182,7 +202,7 @@ func scanWorkspaceSummary(row interface{ Scan(...interface{}) error }) (Workspac
 		&ws.ID, &ws.OrgID, &ws.Name, &ws.Description, &ws.RepoURL, &ws.RepoBranch,
 		&ws.WorkingDir, &ws.TofuVersion, &ws.Environment, &ws.AutoApply, &ws.RequiresApproval,
 		&ws.VcsTriggerEnabled, &ws.Locked, &ws.LockedBy, &ws.CurrentRunID, &ws.CreatedBy,
-		&ws.CreatedAt, &ws.UpdatedAt,
+		&ws.Source, &ws.CurrentConfigVersionID, &ws.CreatedAt, &ws.UpdatedAt,
 		&ws.LastRunStatus, &ws.LastRunAt, &ws.ResourceCount,
 	)
 	return ws, err
@@ -198,7 +218,7 @@ type ListWorkspacesWithSummaryParams struct {
 
 func (q *Queries) ListWorkspacesWithSummary(ctx context.Context, arg ListWorkspacesWithSummaryParams) ([]WorkspaceSummary, error) {
 	rows, err := q.db.Query(ctx,
-		`SELECT `+workspaceColumns+`,
+		`SELECT `+workspaceColumnsQualified+`,
 		       lr.status AS last_run_status,
 		       lr.created_at AS last_run_at,
 		       COALESCE(sv.resource_count, 0) AS resource_count

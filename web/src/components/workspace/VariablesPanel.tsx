@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/api/client";
-import type { WorkspaceVariable, DiscoveredVariable } from "@/api/types";
+import type { WorkspaceVariable, DiscoveredVariable, Workspace, ListResponse } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -15,7 +15,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Plus, Trash2, Lock, Search, X, Check, Pencil, Eye, EyeOff, Upload } from "lucide-react";
+import { Plus, Trash2, Lock, Search, X, Check, Pencil, Eye, EyeOff, Upload, ArrowDownToLine, Copy } from "lucide-react";
 
 interface Props {
   workspaceId: string;
@@ -65,6 +65,14 @@ export function VariablesPanel({ workspaceId }: Props) {
   const [bulkCategory, setBulkCategory] = useState<"terraform" | "env">("terraform");
   const [bulkSensitive, setBulkSensitive] = useState(false);
   const [bulkParsed, setBulkParsed] = useState<{ key: string; value: string }[] | null>(null);
+
+  // Import outputs state
+  const [showImportOutputs, setShowImportOutputs] = useState(false);
+  const [importWorkspaces, setImportWorkspaces] = useState<Workspace[] | null>(null);
+
+  // Copy variables state
+  const [showCopyVars, setShowCopyVars] = useState(false);
+  const [copyWorkspaces, setCopyWorkspaces] = useState<Workspace[] | null>(null);
 
   const { data: variables, isLoading, isError } = useQuery({
     queryKey: ["variables", workspaceId],
@@ -183,6 +191,108 @@ export function VariablesPanel({ workspaceId }: Props) {
     onError: () => toast.error("Failed to import variables"),
   });
 
+  const addAllMutation = useMutation({
+    mutationFn: async (vars: DiscoveredVariable[]) => {
+      const { data, error } = await api.POST(
+        "/workspaces/{workspaceId}/variables/bulk",
+        {
+          params: { path: { workspaceId } },
+          body: {
+            variables: vars.map((v) => ({
+              key: v.name,
+              value: v.default ?? "",
+              sensitive: false,
+              category: "terraform" as const,
+              description: v.description,
+            })),
+          },
+        }
+      );
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["variables", workspaceId] });
+      discoverMutation.mutate();
+      toast.success("All variables added");
+    },
+    onError: () => toast.error("Failed to add variables"),
+  });
+
+  const fetchWorkspacesMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.GET("/workspaces", {
+        params: { query: { per_page: 100 } },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      const others = (data.data as Workspace[]).filter((w: Workspace) => w.id !== workspaceId);
+      setImportWorkspaces(others);
+      setShowImportOutputs(true);
+    },
+    onError: () => toast.error("Failed to load workspaces"),
+  });
+
+  const importOutputsMutation = useMutation({
+    mutationFn: async (sourceWorkspaceId: string) => {
+      const { data, error } = await api.POST(
+        "/workspaces/{workspaceId}/variables/import-outputs",
+        {
+          params: { path: { workspaceId } },
+          body: { source_workspace_id: sourceWorkspaceId },
+        }
+      );
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["variables", workspaceId] });
+      setShowImportOutputs(false);
+      setImportWorkspaces(null);
+      const count = Array.isArray(data) ? data.length : 0;
+      toast.success(`Imported ${count} output(s) as variables`);
+    },
+    onError: () => toast.error("Failed to import outputs"),
+  });
+
+  const copyVariablesMutation = useMutation({
+    mutationFn: async (sourceWorkspaceId: string) => {
+      const { data, error } = await api.POST(
+        "/workspaces/{workspaceId}/variables/copy",
+        {
+          params: { path: { workspaceId } },
+          body: { source_workspace_id: sourceWorkspaceId },
+        }
+      );
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["variables", workspaceId] });
+      setShowCopyVars(false);
+      setCopyWorkspaces(null);
+      toast.success("Variables copied");
+    },
+    onError: () => toast.error("Failed to copy variables"),
+  });
+
+  const openCopyDialog = async () => {
+    setShowCopyVars(true);
+    try {
+      const { data, error } = await api.GET("/workspaces", {
+        params: { query: { per_page: 100 } },
+      });
+      if (error) throw error;
+      const list = (data as ListResponse<Workspace>).data ?? [];
+      setCopyWorkspaces(list.filter((w: Workspace) => w.id !== workspaceId));
+    } catch {
+      toast.error("Failed to load workspaces");
+      setShowCopyVars(false);
+    }
+  };
+
   const handleAddDiscovered = (v: DiscoveredVariable) => {
     setNewKey(v.name); setNewValue(v.default ?? "");
     setNewCategory("terraform"); setNewSensitive(false);
@@ -239,9 +349,17 @@ export function VariablesPanel({ workspaceId }: Props) {
             {discoverMutation.isPending ? <Spinner className="w-3.5 h-3.5" /> : <Search className="w-3.5 h-3.5" />}
             Discover
           </Button>
+          <Button size="sm" variant="outline" onClick={() => fetchWorkspacesMutation.mutate()} disabled={fetchWorkspacesMutation.isPending}>
+            {fetchWorkspacesMutation.isPending ? <Spinner className="w-3.5 h-3.5" /> : <ArrowDownToLine className="w-3.5 h-3.5" />}
+            Import Outputs
+          </Button>
           <Button size="sm" variant="outline" onClick={() => setShowBulkImport(true)}>
             <Upload className="w-3.5 h-3.5" />
             Bulk Import
+          </Button>
+          <Button size="sm" variant="outline" onClick={openCopyDialog}>
+            <Copy className="w-3.5 h-3.5" />
+            Copy Variables
           </Button>
           <Button size="sm" variant="outline" onClick={() => setShowForm(!showForm)}>
             <Plus className="w-3.5 h-3.5" />
@@ -258,9 +376,23 @@ export function VariablesPanel({ workspaceId }: Props) {
               <Search className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm font-medium">Discovered Variables ({discoveredVars.length})</span>
             </div>
-            <button onClick={() => setDiscoveredVars(null)} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
-              <X className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-2">
+              {discoveredVars.filter((v) => !v.configured).length > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs h-7"
+                  disabled={addAllMutation.isPending}
+                  onClick={() => addAllMutation.mutate(discoveredVars.filter((v) => !v.configured))}
+                >
+                  {addAllMutation.isPending ? <Spinner className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                  Add all ({discoveredVars.filter((v) => !v.configured).length})
+                </Button>
+              )}
+              <button onClick={() => setDiscoveredVars(null)} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
           {discoveredVars.length === 0 ? (
             <div className="px-4 py-6 text-center">
@@ -269,27 +401,29 @@ export function VariablesPanel({ workspaceId }: Props) {
           ) : (
             <div className="divide-y divide-border">
               {discoveredVars.map((v) => (
-                <div key={v.name} className="flex items-center justify-between px-4 py-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <code className="text-sm font-mono font-medium">{v.name}</code>
-                    {v.type && <Badge variant="outline" className="text-xs shrink-0">{v.type}</Badge>}
-                    {v.configured ? (
-                      <Badge className="text-xs bg-emerald-500/10 text-emerald-600 border-emerald-500/20 shrink-0"><Check className="w-3 h-3 mr-1" />configured</Badge>
-                    ) : v.required ? (
-                      <Badge className="text-xs bg-red-500/10 text-red-600 border-red-500/20 shrink-0">required</Badge>
-                    ) : (
-                      <Badge className="text-xs bg-amber-500/10 text-amber-600 border-amber-500/20 shrink-0">optional</Badge>
-                    )}
+                <div key={v.name} className="px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <code className="text-sm font-mono font-medium">{v.name}</code>
+                      {v.type && <Badge variant="outline" className="text-xs shrink-0">{v.type}</Badge>}
+                      {v.configured ? (
+                        <Badge className="text-xs bg-emerald-500/10 text-emerald-600 border-emerald-500/20 shrink-0"><Check className="w-3 h-3 mr-1" />configured</Badge>
+                      ) : v.required ? (
+                        <Badge className="text-xs bg-red-500/10 text-red-600 border-red-500/20 shrink-0">required</Badge>
+                      ) : (
+                        <Badge className="text-xs bg-amber-500/10 text-amber-600 border-amber-500/20 shrink-0">optional</Badge>
+                      )}
+                      {v.default !== undefined && <span className="text-xs font-mono text-muted-foreground">={v.default}</span>}
+                    </div>
+                    <div className="shrink-0 ml-3">
+                      {!v.configured && (
+                        <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => handleAddDiscovered(v)}>
+                          <Plus className="w-3 h-3" />Add
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    {v.description && <span className="text-xs text-muted-foreground max-w-[200px] truncate hidden sm:inline">{v.description}</span>}
-                    {v.default !== undefined && <span className="text-xs font-mono text-muted-foreground max-w-[120px] truncate">={v.default}</span>}
-                    {!v.configured && (
-                      <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => handleAddDiscovered(v)}>
-                        <Plus className="w-3 h-3" />Add
-                      </Button>
-                    )}
-                  </div>
+                  {v.description && <p className="text-xs text-muted-foreground mt-1">{v.description}</p>}
                 </div>
               ))}
             </div>
@@ -419,6 +553,81 @@ export function VariablesPanel({ workspaceId }: Props) {
             <Button variant="destructive" size="sm" onClick={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); }} disabled={deleteMutation.isPending}>
               {deleteMutation.isPending ? <Spinner /> : "Delete"}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import outputs dialog */}
+      <Dialog open={showImportOutputs} onClose={() => { setShowImportOutputs(false); setImportWorkspaces(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import Outputs</DialogTitle>
+            <DialogDescription>
+              Import output values from another workspace as variables.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 mt-2 max-h-80 overflow-auto">
+            {importWorkspaces?.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">No other workspaces found.</p>
+            ) : (
+              importWorkspaces?.map((ws) => (
+                <button
+                  key={ws.id}
+                  onClick={() => importOutputsMutation.mutate(ws.id)}
+                  disabled={importOutputsMutation.isPending}
+                  className="w-full flex items-center justify-between px-4 py-3 rounded-lg border border-border hover:border-primary/30 transition-colors text-left cursor-pointer"
+                >
+                  <div>
+                    <div className="text-sm font-medium">{ws.name}</div>
+                    <div className="text-xs text-muted-foreground">{ws.environment} &middot; {ws.source}</div>
+                  </div>
+                  <ArrowDownToLine className="w-4 h-4 text-muted-foreground" />
+                </button>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Copy variables dialog */}
+      <Dialog open={showCopyVars} onClose={() => { setShowCopyVars(false); setCopyWorkspaces(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Copy Variables</DialogTitle>
+            <DialogDescription>
+              Select a workspace to copy variables from. Existing variables with the same key and category will be updated.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 mt-2">
+            {!copyWorkspaces ? (
+              <div className="flex items-center justify-center py-8">
+                <Spinner className="w-5 h-5" />
+              </div>
+            ) : copyWorkspaces.length === 0 ? (
+              <div className="py-6 text-center">
+                <p className="text-sm text-muted-foreground">No other workspaces found.</p>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-border divide-y divide-border max-h-60 overflow-auto">
+                {copyWorkspaces.map((w: Workspace) => (
+                  <button
+                    key={w.id}
+                    className="flex items-center justify-between w-full px-4 py-3 text-left hover:bg-accent/50 transition-colors cursor-pointer"
+                    onClick={() => copyVariablesMutation.mutate(w.id)}
+                    disabled={copyVariablesMutation.isPending}
+                  >
+                    <div>
+                      <p className="text-sm font-medium">{w.name}</p>
+                      {w.description && <p className="text-xs text-muted-foreground mt-0.5">{w.description}</p>}
+                    </div>
+                    <Badge variant="outline" className="text-xs shrink-0">{w.environment}</Badge>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => { setShowCopyVars(false); setCopyWorkspaces(null); }}>Cancel</Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
