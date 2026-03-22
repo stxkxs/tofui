@@ -19,11 +19,17 @@ import (
 	"github.com/stxkxs/tofui/internal/worker/executor"
 )
 
+type ImportResource struct {
+	Address string `json:"address"`
+	ID      string `json:"id"`
+}
+
 type RunJobArgs struct {
-	RunID       string `json:"run_id"`
-	WorkspaceID string `json:"workspace_id"`
-	OrgID       string `json:"org_id"`
-	Operation   string `json:"operation"`
+	RunID       string           `json:"run_id"`
+	WorkspaceID string           `json:"workspace_id"`
+	OrgID       string           `json:"org_id"`
+	Operation   string           `json:"operation"`
+	Imports     []ImportResource `json:"imports,omitempty"`
 }
 
 func (RunJobArgs) Kind() string { return "run" }
@@ -80,7 +86,7 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 
 	// Update run status
 	status := "planning"
-	if args.Operation == "apply" || args.Operation == "destroy" {
+	if args.Operation == "apply" || args.Operation == "destroy" || args.Operation == "import" || args.Operation == "test" {
 		status = "applying"
 	}
 	if _, err := w.queries.UpdateRunStarted(ctx, repository.UpdateRunStartedParams{ID: args.RunID, Status: status}); err != nil {
@@ -119,14 +125,33 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 		latestSV, err := w.queries.GetLatestStateVersion(ctx, repository.GetLatestStateVersionParams{
 			WorkspaceID: args.WorkspaceID, OrgID: args.OrgID,
 		})
-		if err == nil && latestSV.StateURL != "" {
-			if stateData, err := w.storage.GetState(ctx, latestSV.StateURL); err == nil {
+		if err == nil && latestSV.Serial > 0 {
+			// Try raw state first (preserves encryption), fall back to browse state
+			rawKey := fmt.Sprintf("state-raw/%s/%d.tfstate", args.WorkspaceID, latestSV.Serial)
+			if stateData, err := w.storage.GetRawState(ctx, rawKey); err == nil {
 				previousState = stateData
-				logger.Info("fetched previous state", "serial", latestSV.Serial, "size", len(stateData))
-			} else {
-				logger.Warn("failed to fetch previous state", "error", err)
+				logger.Info("fetched previous state (raw)", "serial", latestSV.Serial, "size", len(stateData))
+			} else if latestSV.StateURL != "" {
+				if stateData, err := w.storage.GetState(ctx, latestSV.StateURL); err == nil {
+					previousState = stateData
+					logger.Info("fetched previous state (browse)", "serial", latestSV.Serial, "size", len(stateData))
+				} else {
+					logger.Warn("failed to fetch previous state", "error", err)
+				}
 			}
 		}
+	}
+
+	// Download config archive for upload workspaces
+	var archiveData []byte
+	if workspace.Source == "upload" && workspace.CurrentConfigVersionID != "" && w.storage != nil {
+		key := fmt.Sprintf("configs/%s/%s.tar.gz", args.WorkspaceID, workspace.CurrentConfigVersionID)
+		data, err := w.storage.GetConfigArchive(ctx, key)
+		if err != nil {
+			return w.failRun(ctx, args, logger, fmt.Errorf("failed to download config archive: %w", err), "")
+		}
+		archiveData = data
+		logger.Info("downloaded config archive", "config_version", workspace.CurrentConfigVersionID, "size", len(data))
 	}
 
 	// Derive state encryption passphrase if encryption is configured
@@ -155,16 +180,47 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 		LogCallback:               logCallback,
 		PreviousState:             previousState,
 		StateEncryptionPassphrase: stateEncPassphrase,
+		Source:                    workspace.Source,
+		ArchiveData:               archiveData,
+		ImportResources:           toExecutorImports(args.Imports),
 	})
 
 	if err != nil {
+		// Save partial state if the executor captured it (e.g. failed apply with some resources created)
+		if result != nil && result.StateFile != nil && w.storage != nil {
+			latestSV, _ := w.queries.GetLatestStateVersion(ctx, repository.GetLatestStateVersionParams{
+				WorkspaceID: args.WorkspaceID, OrgID: args.OrgID,
+			})
+			nextSerial := latestSV.Serial + 1
+
+			if _, storeErr := w.storage.PutRawState(ctx, args.WorkspaceID, int(nextSerial), result.StateFile); storeErr != nil {
+				logger.Error("failed to upload partial raw state", "error", storeErr)
+			}
+
+			browseState := result.StateJSON
+			if len(browseState) == 0 {
+				browseState = result.StateFile
+			}
+			if stateURL, storeErr := w.storage.PutState(ctx, args.WorkspaceID, int(nextSerial), browseState); storeErr != nil {
+				logger.Error("failed to upload partial state", "error", storeErr)
+			} else {
+				w.queries.CreateStateVersion(ctx, repository.CreateStateVersionParams{
+					ID: ulid.Make().String(), WorkspaceID: args.WorkspaceID, OrgID: args.OrgID,
+					RunID: args.RunID, Serial: nextSerial, StateURL: stateURL,
+					ResourceCount: 0, ResourceSummary: "partial (errored)",
+				})
+				logger.Info("saved partial state from failed run", "serial", nextSerial)
+			}
+		}
 		return w.failRun(ctx, args, logger, err, logBuf.String())
 	}
 
 	// Determine final status
 	finalStatus := "planned"
-	if args.Operation == "apply" || args.Operation == "destroy" {
+	if args.Operation == "apply" || args.Operation == "destroy" || args.Operation == "import" {
 		finalStatus = "applied"
+	} else if args.Operation == "test" {
+		finalStatus = "applied" // test is terminal — "applied" prevents approval flow
 	} else if args.Operation == "plan" {
 		finalStatus = postPlanAction(workspace.AutoApply, workspace.RequiresApproval)
 	}
@@ -178,7 +234,7 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 		} else {
 			planLog := &logURL
 			var applyLog *string
-			if args.Operation != "plan" {
+			if args.Operation != "plan" && args.Operation != "test" {
 				applyLog = planLog
 				planLog = nil
 			}
@@ -204,14 +260,25 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 		}
 	}
 
-	// Upload state file to S3 after apply/destroy
+	// Upload state to S3 after apply/destroy
 	if result.StateFile != nil && w.storage != nil {
 		latestSV, _ := w.queries.GetLatestStateVersion(ctx, repository.GetLatestStateVersionParams{
 			WorkspaceID: args.WorkspaceID, OrgID: args.OrgID,
 		})
 		nextSerial := latestSV.Serial + 1
 
-		stateURL, err := w.storage.PutState(ctx, args.WorkspaceID, int(nextSerial), result.StateFile)
+		// Store raw state (may be encrypted) for restoration on next run
+		if _, err := w.storage.PutRawState(ctx, args.WorkspaceID, int(nextSerial), result.StateFile); err != nil {
+			logger.Error("failed to upload raw state", "error", err)
+		}
+
+		// Store decrypted JSON for the resource browser (fall back to raw if no decrypted version)
+		browseState := result.StateJSON
+		if len(browseState) == 0 {
+			browseState = result.StateFile
+		}
+
+		stateURL, err := w.storage.PutState(ctx, args.WorkspaceID, int(nextSerial), browseState)
 		if err != nil {
 			logger.Error("failed to upload state", "error", err)
 		} else {
@@ -345,6 +412,17 @@ func postPlanAction(autoApply, requiresApproval bool) string {
 		return "awaiting_approval"
 	}
 	return "planned"
+}
+
+func toExecutorImports(imports []ImportResource) []executor.ImportResource {
+	if len(imports) == 0 {
+		return nil
+	}
+	result := make([]executor.ImportResource, len(imports))
+	for i, imp := range imports {
+		result[i] = executor.ImportResource{Address: imp.Address, ID: imp.ID}
+	}
+	return result
 }
 
 func (w *RunJobWorker) enqueueNextPendingRun(ctx context.Context, workspaceID string, logger *slog.Logger) {

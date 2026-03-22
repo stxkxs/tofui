@@ -10,9 +10,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { navigate } from "@/hooks/useNavigate";
 import { Copy, Check } from "lucide-react";
 
-const schema = z.object({
+const vcsSchema = z.object({
   name: z.string().min(1, "Name is required").max(64),
   description: z.string().max(256).optional(),
   repo_url: z.string().url("Must be a valid URL"),
@@ -25,7 +26,17 @@ const schema = z.object({
   vcs_trigger_enabled: z.boolean(),
 });
 
-type FormValues = z.infer<typeof schema>;
+const uploadSchema = z.object({
+  name: z.string().min(1, "Name is required").max(64),
+  description: z.string().max(256).optional(),
+  working_dir: z.string().min(1),
+  tofu_version: z.string().min(1),
+  environment: z.enum(["development", "staging", "production"]),
+  auto_apply: z.boolean(),
+  requires_approval: z.boolean(),
+});
+
+type FormValues = z.infer<typeof vcsSchema>;
 
 interface Props {
   workspace: Workspace;
@@ -73,6 +84,8 @@ function WebhookURLField() {
 export function WorkspaceSettings({ workspace }: Props) {
   const queryClient = useQueryClient();
   const [deleteConfirm, setDeleteConfirm] = useState("");
+  const isUpload = workspace.source === "upload";
+  const schema = isUpload ? uploadSchema : vcsSchema;
 
   const {
     register,
@@ -122,7 +135,7 @@ export function WorkspaceSettings({ workspace }: Props) {
     },
     onSuccess: () => {
       toast.success("Workspace deleted");
-      window.location.href = "/";
+      navigate("/");
     },
     onError: () => toast.error("Failed to delete workspace"),
   });
@@ -146,19 +159,23 @@ export function WorkspaceSettings({ workspace }: Props) {
           <Input {...register("description")} />
         </div>
 
-        <div>
-          <label className="block text-sm font-medium mb-1.5">Repository URL</label>
-          <Input {...register("repo_url")} />
-          {errors.repo_url && (
-            <p className="text-xs text-destructive mt-1">{errors.repo_url.message}</p>
-          )}
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
+        {!isUpload && (
           <div>
-            <label className="block text-sm font-medium mb-1.5">Branch</label>
-            <Input {...register("repo_branch")} />
+            <label className="block text-sm font-medium mb-1.5">Repository URL</label>
+            <Input {...register("repo_url")} />
+            {errors.repo_url && (
+              <p className="text-xs text-destructive mt-1">{errors.repo_url.message}</p>
+            )}
           </div>
+        )}
+
+        <div className={isUpload ? "" : "grid grid-cols-2 gap-3"}>
+          {!isUpload && (
+            <div>
+              <label className="block text-sm font-medium mb-1.5">Branch</label>
+              <Input {...register("repo_branch")} />
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium mb-1.5">Working directory</label>
             <Input {...register("working_dir")} />
@@ -210,24 +227,28 @@ export function WorkspaceSettings({ workspace }: Props) {
           </div>
         </label>
 
-        <h3 className="text-lg font-semibold pt-4">VCS Integration</h3>
+        {!isUpload && (
+          <>
+            <h3 className="text-lg font-semibold pt-4">VCS Integration</h3>
 
-        <label className="flex items-center gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            {...register("vcs_trigger_enabled")}
-            className="w-4 h-4 rounded border-border"
-          />
-          <div>
-            <div className="text-sm font-medium">VCS-driven runs</div>
-            <div className="text-xs text-muted-foreground">
-              Automatically trigger a plan when code is pushed to the configured branch
-            </div>
-          </div>
-        </label>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                {...register("vcs_trigger_enabled")}
+                className="w-4 h-4 rounded border-border"
+              />
+              <div>
+                <div className="text-sm font-medium">VCS-driven runs</div>
+                <div className="text-xs text-muted-foreground">
+                  Automatically trigger a plan when code is pushed to the configured branch
+                </div>
+              </div>
+            </label>
 
-        {workspace.vcs_trigger_enabled && (
-          <WebhookURLField />
+            {workspace.vcs_trigger_enabled && (
+              <WebhookURLField />
+            )}
+          </>
         )}
 
         <div className="flex justify-end pt-2">

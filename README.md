@@ -1,6 +1,6 @@
 # tofui
 
-OpenTofu lifecycle management UI. Self-hosted alternative to Terraform Cloud / Spacelift.
+Self-hosted OpenTofu lifecycle management UI. An alternative to Terraform Cloud and Spacelift.
 
 Plan, apply, and manage OpenTofu workspaces through a web interface with team access controls, approval workflows, audit logging, and VCS-driven runs.
 
@@ -9,163 +9,149 @@ Plan, apply, and manage OpenTofu workspaces through a web interface with team ac
 Prerequisites: Go 1.25+, Node.js 20+, Docker, [Task](https://taskfile.dev)
 
 ```bash
-# 1. Clone and install dependencies
+# Clone and set up
 git clone https://github.com/stxkxs/tofui.git && cd tofui
 task setup
 
-# 2. Create a GitHub OAuth App
-#    Homepage URL: http://localhost:5173
-#    Callback URL: http://localhost:8080/api/v1/auth/github/callback
-
-# 3. Export GitHub credentials
-export GITHUB_CLIENT_ID=your_client_id
-export GITHUB_CLIENT_SECRET=your_client_secret
-
-# 4. Start everything
+# Start everything
 task dev
 ```
 
-Open http://localhost:5173 and sign in with GitHub. The first user gets the `owner` role.
+Open http://localhost:5173 and click **Dev Login**. No GitHub OAuth needed for local development — the first user gets the `owner` role.
+
+To use GitHub OAuth locally, create a [GitHub OAuth App](https://github.com/settings/developers) with:
+- Homepage URL: `http://localhost:5173`
+- Callback URL: `http://localhost:8080/api/v1/auth/github/callback`
+
+```bash
+export GITHUB_CLIENT_ID=your_client_id
+export GITHUB_CLIENT_SECRET=your_client_secret
+```
+
+### What `task setup` Does
+
+1. Downloads Go and Node.js dependencies
+2. Starts Postgres, Redis, and MinIO via Docker
+3. Runs database migrations
+
+### What `task dev` Starts
+
+| Process | Address | Purpose |
+|---------|---------|---------|
+| server | `:8080` | Go API — auth, CRUD, WebSocket log streaming |
+| worker | `:8081` | Job processor — runs `tofu` commands |
+| web | `:5173` | Vite dev server — React SPA with HMR |
+
+## Workspaces
+
+A workspace connects to your OpenTofu configuration in one of two ways:
+
+- **VCS** — point to a Git repository + branch. The worker clones and runs tofu.
+- **Upload** — upload a `.tar.gz` archive of `.tf` files directly through the UI.
+
+Both support variables, state management, plan/apply/destroy, and approval workflows.
+
+## Features
+
+- **Plan / Apply / Destroy** with run queuing, cancellation, and real-time log streaming
+- **VCS Integration** — GitHub push webhooks trigger automatic plan runs
+- **Upload Workspaces** — manage infrastructure without a Git repo
+- **Approval Workflows** — require manual approval before apply, with auto-apply option
+- **Team Access Controls** — RBAC roles (owner / admin / operator / viewer)
+- **Variable Management** — encrypted sensitive values, variable discovery from `.tf` files, bulk import
+- **State Management** — versioned state in S3, resource browser, state version diffing
+- **Plan Diff Viewer** — attribute-level change visualization from JSON plan output
+- **Audit Logging** — all mutations logged with before/after state
+- **Real-time Logs** — WebSocket streaming via xterm.js terminal
 
 ## Architecture
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌──────────┐
-│   web (SPA) │────>│  server (:8080) │────>│ Postgres │
-│  Vite+React │     │  Go / chi    │     └──────────┘
-└─────────────┘     └──────┬───────┘          │
-                           │              ┌───┴────┐
-                    WebSocket (logs)       │ Redis  │ (pub/sub)
-                           │              └───┬────┘
-                    ┌──────┴───────┐          │
-                    │ worker       │──────────┘
-                    │ River jobs   │────> tofu init/plan/apply
-                    └──────────────┘────> MinIO (state + logs)
+┌─────────────┐     ┌─────────────────┐     ┌──────────┐
+│  web (SPA)  │────>│  server (:8080) │────>│ Postgres │
+│ Vite+React  │     │  Go / chi       │     └──────────┘
+└─────────────┘     └──────┬──────────┘          │
+                           │              ┌──────┴──┐
+                    WebSocket (logs)      │  Redis  │ (pub/sub)
+                           │              └──────┬──┘
+                    ┌──────┴──────────┐          │
+                    │ worker          │──────────┘
+                    │ River jobs      │────> tofu init/plan/apply
+                    └─────────────────┘────> MinIO (state + logs)
 ```
 
-| Component | Description |
-|-----------|-------------|
-| **server** | Go API on `:8080` — chi router, JWT auth, RBAC, WebSocket log streaming |
-| **worker** | River job processor — clones repos, runs `tofu` via local or Kubernetes executor |
-| **web** | Vite + React 19 SPA — Tailwind CSS 4, TanStack Query, xterm.js terminal |
-| **Postgres** | Primary data store + River job queue |
-| **Redis** | Log streaming pub/sub between worker and server |
-| **MinIO** | S3-compatible storage for state files and run logs |
-
-## Project Structure
-
-```
-cmd/
-  server/         API server entrypoint
-  worker/         Job worker entrypoint
-  migrate/        Database migration runner
-internal/
-  auth/           JWT + RBAC middleware
-  domain/         Config, shared types
-  handler/        HTTP handlers (auth, workspace, run, variables, teams, etc.)
-  logstream/      Real-time log fan-out (memory + Redis)
-  repository/     Database queries (pgx, hand-written sqlc-style)
-  secrets/        AES-256 encryption for sensitive variables
-  server/         Router setup, middleware (rate limit, security headers)
-  service/        Business logic (workspace, run, audit)
-  storage/        S3/MinIO client for state and logs
-  tfparse/        Terraform file parser (variable discovery)
-  vcs/            GitHub webhook parsing + HMAC verification
-  worker/         River job worker + executor interface
-    executor/     OpenTofu execution (local.go, kubernetes.go)
-web/
-  src/
-    api/          API client (openapi-fetch) + TypeScript types
-    components/   React components (workspace, run, team, UI primitives)
-    hooks/        Custom hooks (WebSocket streaming, etc.)
-migrations/       SQL migrations (golang-migrate)
-api/openapi/      OpenAPI v3.1 spec
-deploy/helm/      Helm chart for Kubernetes
-docker/           Dockerfiles (server, worker, web, migrate, executor)
-```
+See [docs/architecture.md](docs/architecture.md) for details on the job queue, log streaming, and executor model.
 
 ## Development
 
-### Task Commands
-
 ```bash
-task setup          # Install deps, start infra, run migrations
-task dev            # Start server + worker + web concurrently
 task dev:server     # API server only
 task dev:worker     # Worker only
 task dev:web        # Vite dev server only
 
 task infra:up       # Start Postgres, Redis, MinIO
-task infra:down     # Stop all infrastructure
+task infra:down     # Stop infrastructure
 task db:migrate     # Run migrations
 task db:reset       # Drop and recreate database
 
 task test           # go test ./...
 task lint           # go vet + tsc --noEmit
 task build          # Build Go binaries
-task build:web      # Build frontend for production
+task docker:build   # Build all Docker images
 ```
-
-### Environment Variables
-
-All config is via environment variables with sensible dev defaults. Only `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are required for local dev.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GITHUB_CLIENT_ID` | — | GitHub OAuth app client ID |
-| `GITHUB_CLIENT_SECRET` | — | GitHub OAuth app client secret |
-| `DATABASE_URL` | `postgres://tofui:tofui@localhost:5432/tofui?sslmode=disable` | Postgres connection |
-| `REDIS_URL` | `redis://localhost:6379` | Redis for log pub/sub |
-| `S3_ENDPOINT` | `localhost:9000` | MinIO/S3 endpoint |
-| `S3_ACCESS_KEY` | `minioadmin` | S3 access key |
-| `S3_SECRET_KEY` | `minioadmin` | S3 secret key |
-| `JWT_SECRET` | `dev-secret-change-in-production` | JWT signing key |
-| `ENCRYPTION_KEY` | `dev-encryption-key-32bytes!!!!!!` | AES-256 key (exactly 32 bytes) |
-| `WEBHOOK_SECRET` | — | HMAC secret for GitHub webhooks |
-| `EXECUTOR_TYPE` | `local` | `local` or `kubernetes` |
-| `ENVIRONMENT` | `development` | `development`, `staging`, or `production` |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
 ### Workspace Variables
 
-When configuring workspace variables in the UI, choose the correct category:
+When configuring variables in the UI, choose the correct category:
 
-- **OpenTofu** (`terraform`) — written to `tofui.auto.tfvars`, used as Terraform input variables
+- **OpenTofu** (`terraform`) — written to `tofui.auto.tfvars`, used as tofu input variables
 - **Environment** (`env`) — injected as process environment variables (e.g. `AWS_PROFILE`, `AWS_REGION`)
 
-AWS credentials must be set as **Environment** category variables, not OpenTofu.
+AWS credentials must use the **Environment** category.
 
-### Testing
+## Configuration
 
-```bash
-go test ./...                                              # All Go tests
-go test ./internal/tfparse/ ./internal/handler/            # Parser + handler tests
-go test ./internal/auth/ ./internal/worker/ ./internal/vcs/ # Auth, worker, VCS tests
-cd web && npx tsc --noEmit && npx vite build               # Frontend type-check + build
+All config is via environment variables. Only `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are required for local dev — everything else has working defaults.
+
+See [docs/configuration.md](docs/configuration.md) for the full reference.
+
+## Deployment
+
+Docker images, Helm chart, and production configuration guide.
+
+See [docs/deployment.md](docs/deployment.md).
+
+## Project Structure
+
 ```
-
-## Features
-
-- **Workspaces** — CRUD, lock/unlock, auto-apply, approval requirements, VCS triggers
-- **Runs** — Plan/apply/destroy with queuing, cancellation, real-time log streaming
-- **Variable Discovery** — Parse `.tf` files from repo to find required variables
-- **Team Access** — RBAC roles (owner/admin/operator/viewer) with team-based workspace access
-- **Approval Workflows** — Require manual approval before apply
-- **Audit Logging** — All mutations logged with before/after state
-- **VCS Integration** — GitHub push webhooks trigger automatic plan runs
-- **State Management** — Versioned state storage in S3 with download support
-- **Encrypted Variables** — AES-256 encryption for sensitive values
-
-## Production
-
-In non-development environments, the following must be set:
-- `JWT_SECRET` — unique signing key
-- `ENCRYPTION_KEY` — 32-byte AES key
-- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`
-- `WEBHOOK_SECRET` — for GitHub webhook HMAC verification
-- `S3_ACCESS_KEY` / `S3_SECRET_KEY` — non-default credentials
-
-See `deploy/helm/tofui/` for the Kubernetes Helm chart.
+cmd/
+  server/           API server entrypoint
+  worker/           Job worker entrypoint
+  migrate/          Database migration runner
+internal/
+  auth/             JWT + RBAC middleware
+  domain/           Config, shared types
+  handler/          HTTP handlers
+  logstream/        Real-time log fan-out (memory + Redis)
+  repository/       Database queries (pgx, hand-written sqlc-style)
+  secrets/          AES-256 encryption for sensitive variables
+  server/           Router setup, middleware
+  service/          Business logic
+  storage/          S3/MinIO client
+  tfparse/          .tf file parser (variable discovery)
+  tfstate/          State file parsing and diffing
+  vcs/              GitHub webhook parsing + HMAC verification
+  worker/
+    executor/       OpenTofu execution (local + kubernetes)
+web/src/
+  api/              API client (openapi-fetch) + types
+  components/       React components by domain
+  hooks/            Custom hooks
+migrations/         SQL schema (golang-migrate)
+api/openapi/        OpenAPI v3.1 spec
+deploy/helm/        Helm chart for Kubernetes
+docker/             Dockerfiles
+```
 
 ## License
 

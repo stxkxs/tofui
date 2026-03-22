@@ -1,1 +1,0 @@
-ALTER TABLE runs ADD COLUMN plan_json_url TEXT NOT NULL DEFAULT '';

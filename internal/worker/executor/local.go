@@ -1,7 +1,10 @@
 package executor
 
 import (
+	"archive/tar"
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -34,15 +37,24 @@ func (e *LocalExecutor) Execute(ctx context.Context, params ExecuteParams) (*Exe
 
 	params.LogCallback([]byte(fmt.Sprintf("Preparing workspace for run %s...\r\n", params.RunID)))
 
-	// Clone repository
-	params.LogCallback([]byte(fmt.Sprintf("Cloning %s (branch: %s)...\r\n", params.RepoURL, params.RepoBranch)))
-	cloneCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--branch", params.RepoBranch, params.RepoURL, workDir)
-	cloneOutput, err := cloneCmd.CombinedOutput()
-	if err != nil {
-		params.LogCallback([]byte(fmt.Sprintf("\033[31mGit clone failed: %s\033[0m\r\n", string(cloneOutput))))
-		return nil, fmt.Errorf("git clone failed: %w", err)
+	// Get source code: clone repo or extract uploaded archive
+	if params.Source == "upload" {
+		params.LogCallback([]byte("Extracting uploaded configuration...\r\n"))
+		if err := extractArchive(params.ArchiveData, workDir); err != nil {
+			params.LogCallback([]byte(fmt.Sprintf("\033[31mArchive extraction failed: %s\033[0m\r\n", err)))
+			return nil, fmt.Errorf("archive extraction failed: %w", err)
+		}
+		params.LogCallback([]byte("Configuration extracted successfully.\r\n\r\n"))
+	} else {
+		params.LogCallback([]byte(fmt.Sprintf("Cloning %s (branch: %s)...\r\n", params.RepoURL, params.RepoBranch)))
+		cloneCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--branch", params.RepoBranch, params.RepoURL, workDir)
+		cloneOutput, err := cloneCmd.CombinedOutput()
+		if err != nil {
+			params.LogCallback([]byte(fmt.Sprintf("\033[31mGit clone failed: %s\033[0m\r\n", string(cloneOutput))))
+			return nil, fmt.Errorf("git clone failed: %w", err)
+		}
+		params.LogCallback([]byte("Repository cloned successfully.\r\n\r\n"))
 	}
-	params.LogCallback([]byte("Repository cloned successfully.\r\n\r\n"))
 
 	tfDir := filepath.Join(workDir, params.WorkingDir)
 
@@ -71,8 +83,26 @@ func (e *LocalExecutor) Execute(ctx context.Context, params ExecuteParams) (*Exe
 		return nil, fmt.Errorf("failed to write variables: %w", err)
 	}
 
-	// Build environment with env variables
-	env := append(os.Environ(), "TF_IN_AUTOMATION=true", "TF_INPUT=false")
+	// Build environment with env variables, filtering out tofui-internal vars
+	// that could interfere with provider SDKs (e.g. S3_ENDPOINT confusing the AWS SDK)
+	var env []string
+	for _, e := range os.Environ() {
+		key := strings.SplitN(e, "=", 2)[0]
+		switch key {
+		case "S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BUCKET", "S3_USE_SSL", "S3_REGION":
+			continue // skip tofui MinIO config
+		default:
+			env = append(env, e)
+		}
+	}
+	env = append(env, "TF_IN_AUTOMATION=true", "TF_INPUT=false")
+
+	// Use plugin cache to avoid re-downloading providers every run
+	if os.Getenv("TF_PLUGIN_CACHE_DIR") == "" {
+		cacheDir := filepath.Join(os.TempDir(), "tofui-plugin-cache")
+		os.MkdirAll(cacheDir, 0755)
+		env = append(env, "TF_PLUGIN_CACHE_DIR="+cacheDir)
+	}
 	for _, v := range params.Variables {
 		if v.Category == "env" {
 			env = append(env, fmt.Sprintf("%s=%s", v.Key, v.Value))
@@ -98,6 +128,97 @@ func (e *LocalExecutor) Execute(ctx context.Context, params ExecuteParams) (*Exe
 	var tfArgs []string
 
 	switch params.Operation {
+	case "test":
+		// Export outputs to JSON for smoke-test.sh
+		params.LogCallback([]byte("\033[1m$ tofu output -json\033[0m\r\n"))
+		outputCmd := exec.CommandContext(ctx, "tofu", "output", "-json")
+		outputCmd.Dir = tfDir
+		outputCmd.Env = env
+		outputJSON, outputErr := outputCmd.Output()
+		if outputErr != nil {
+			params.LogCallback([]byte(fmt.Sprintf("\033[33mWarning: tofu output failed: %s (continuing anyway)\033[0m\r\n", outputErr)))
+		} else {
+			outputsPath := filepath.Join(tfDir, "outputs.json")
+			if err := os.WriteFile(outputsPath, outputJSON, 0600); err != nil {
+				return nil, fmt.Errorf("failed to write outputs.json: %w", err)
+			}
+			params.LogCallback([]byte("Outputs written to outputs.json\r\n"))
+		}
+		params.LogCallback([]byte("\r\n"))
+
+		// Execute smoke-test.sh
+		smokeTestPath := filepath.Join(tfDir, "smoke-test.sh")
+		if _, err := os.Stat(smokeTestPath); os.IsNotExist(err) {
+			return nil, fmt.Errorf("smoke-test.sh not found in working directory")
+		}
+		// Ensure executable
+		os.Chmod(smokeTestPath, 0755)
+
+		params.LogCallback([]byte("\033[1m$ ./smoke-test.sh\033[0m\r\n"))
+
+		testCmd := exec.CommandContext(ctx, "/bin/sh", smokeTestPath)
+		testCmd.Dir = tfDir
+		testCmd.Env = env
+
+		testStdout, err := testCmd.StdoutPipe()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
+		}
+		testCmd.Stderr = testCmd.Stdout
+
+		if err := testCmd.Start(); err != nil {
+			return nil, fmt.Errorf("failed to start smoke-test.sh: %w", err)
+		}
+
+		var testOutputBuf strings.Builder
+		scanner := bufio.NewScanner(testStdout)
+		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			line := scanner.Text()
+			testOutputBuf.WriteString(line)
+			testOutputBuf.WriteString("\n")
+			params.LogCallback([]byte(line + "\r\n"))
+		}
+
+		if err := testCmd.Wait(); err != nil {
+			result.Output = testOutputBuf.String()
+			return result, fmt.Errorf("smoke-test.sh failed: %w", err)
+		}
+
+		result.Output = testOutputBuf.String()
+		params.LogCallback([]byte("\r\n\033[32mSmoke test passed.\033[0m\r\n"))
+		return result, nil
+
+	case "import":
+		params.LogCallback([]byte("\033[1m$ tofu import\033[0m\r\n"))
+		for _, res := range params.ImportResources {
+			params.LogCallback([]byte(fmt.Sprintf("Importing %s = %s...\r\n", res.Address, res.ID)))
+			importArgs := []string{"import", "-no-color"}
+			if e.hasVarFile(tfDir) {
+				importArgs = append(importArgs, "-var-file=tofui.auto.tfvars")
+			}
+			importArgs = append(importArgs, res.Address, res.ID)
+			if err := e.runTofu(ctx, tfDir, importArgs, env, params.LogCallback); err != nil {
+				params.LogCallback([]byte(fmt.Sprintf("\033[31mImport failed for %s: %s\033[0m\r\n", res.Address, err)))
+				return nil, fmt.Errorf("tofu import failed for %s: %w", res.Address, err)
+			}
+			params.LogCallback([]byte(fmt.Sprintf("\033[32mImported %s\033[0m\r\n", res.Address)))
+		}
+		params.LogCallback([]byte(fmt.Sprintf("\r\n\033[32mSuccessfully imported %d resource(s)\033[0m\r\n", len(params.ImportResources))))
+
+		// Capture state after import
+		statePath := filepath.Join(tfDir, "terraform.tfstate")
+		if stateData, err := os.ReadFile(statePath); err == nil && len(stateData) > 0 {
+			result.StateFile = stateData
+		}
+		pullCmd := exec.CommandContext(ctx, "tofu", "state", "pull")
+		pullCmd.Dir = tfDir
+		pullCmd.Env = env
+		if jsonData, err := pullCmd.Output(); err == nil && len(jsonData) > 0 {
+			result.StateJSON = jsonData
+		}
+		return result, nil
+
 	case "plan":
 		tfArgs = []string{"plan", "-no-color", "-detailed-exitcode", "-out=planfile"}
 		if e.hasVarFile(tfDir) {
@@ -125,6 +246,23 @@ func (e *LocalExecutor) Execute(ctx context.Context, params ExecuteParams) (*Exe
 		if params.Operation == "plan" && strings.Contains(err.Error(), "exit status 2") {
 			logger.Info("plan detected changes")
 		} else {
+			// For apply/destroy, capture partial state before returning the error
+			// so resources created before the failure are tracked
+			if params.Operation == "apply" || params.Operation == "destroy" {
+				result.Output = output
+				statePath := filepath.Join(tfDir, "terraform.tfstate")
+				if stateData, readErr := os.ReadFile(statePath); readErr == nil && len(stateData) > 0 {
+					result.StateFile = stateData
+					logger.Info("captured partial state from failed apply", "size", len(stateData))
+				}
+				pullCmd := exec.CommandContext(ctx, "tofu", "state", "pull")
+				pullCmd.Dir = tfDir
+				pullCmd.Env = env
+				if jsonData, pullErr := pullCmd.Output(); pullErr == nil && len(jsonData) > 0 {
+					result.StateJSON = jsonData
+				}
+				return result, fmt.Errorf("tofu %s failed: %w", params.Operation, err)
+			}
 			return nil, fmt.Errorf("tofu %s failed: %w", params.Operation, err)
 		}
 	}
@@ -157,23 +295,64 @@ func (e *LocalExecutor) Execute(ctx context.Context, params ExecuteParams) (*Exe
 		result.ResourcesDeleted = int32(deleted)
 	}
 
-	// Capture state file after apply/destroy
+	// Capture state after apply/destroy
 	if params.Operation == "apply" || params.Operation == "destroy" {
+		// Raw state file (may be encrypted) — used for restoration on next run
 		statePath := filepath.Join(tfDir, "terraform.tfstate")
 		if stateData, err := os.ReadFile(statePath); err == nil && len(stateData) > 0 {
 			result.StateFile = stateData
 			logger.Info("captured state file", "size", len(stateData))
+		}
+
+		// Decrypted state via "tofu state pull" — used for resource browsing
+		pullCmd := exec.CommandContext(ctx, "tofu", "state", "pull")
+		pullCmd.Dir = tfDir
+		pullCmd.Env = env
+		if jsonData, err := pullCmd.Output(); err == nil && len(jsonData) > 0 {
+			result.StateJSON = jsonData
 		}
 	}
 
 	return result, nil
 }
 
+// isHCLLiteral returns true if the value looks like an HCL literal
+// (map, list, number, bool) that should not be quoted in tfvars.
+func isHCLLiteral(v string) bool {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return false
+	}
+	// Maps and objects: { ... }
+	if strings.HasPrefix(v, "{") && strings.HasSuffix(v, "}") {
+		return true
+	}
+	// Lists and tuples: [ ... ]
+	if strings.HasPrefix(v, "[") && strings.HasSuffix(v, "]") {
+		return true
+	}
+	// Booleans
+	if v == "true" || v == "false" {
+		return true
+	}
+	// Numbers — must consume the entire string
+	var f float64
+	var trailing string
+	if n, _ := fmt.Sscanf(v, "%f%s", &f, &trailing); n == 1 {
+		return true
+	}
+	return false
+}
+
 func (e *LocalExecutor) writeVariables(tfDir string, vars []Variable) error {
 	var tfVars []string
 	for _, v := range vars {
 		if v.Category == "terraform" {
-			tfVars = append(tfVars, fmt.Sprintf("%s = %q", v.Key, v.Value))
+			if isHCLLiteral(v.Value) {
+				tfVars = append(tfVars, fmt.Sprintf("%s = %s", v.Key, v.Value))
+			} else {
+				tfVars = append(tfVars, fmt.Sprintf("%s = %q", v.Key, v.Value))
+			}
 		}
 	}
 	if len(tfVars) == 0 {
@@ -191,6 +370,53 @@ func (e *LocalExecutor) hasVarFile(tfDir string) bool {
 func (e *LocalExecutor) runTofu(ctx context.Context, dir string, args, env []string, logCallback func([]byte)) error {
 	_, err := e.runTofuCapture(ctx, dir, args, env, logCallback)
 	return err
+}
+
+func extractArchive(data []byte, destDir string) error {
+	gr, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("invalid gzip: %w", err)
+	}
+	defer gr.Close()
+
+	tr := tar.NewReader(gr)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("reading tar: %w", err)
+		}
+
+		// Prevent path traversal
+		cleanName := filepath.Clean(hdr.Name)
+		if strings.HasPrefix(cleanName, "..") {
+			return fmt.Errorf("invalid path in archive: %s", hdr.Name)
+		}
+
+		target := filepath.Join(destDir, cleanName)
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return err
+			}
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode))
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(f, tr); err != nil {
+				f.Close()
+				return err
+			}
+			f.Close()
+		}
+	}
+	return nil
 }
 
 func (e *LocalExecutor) runTofuCapture(ctx context.Context, dir string, args, env []string, logCallback func([]byte)) (string, error) {

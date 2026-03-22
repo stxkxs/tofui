@@ -11,11 +11,12 @@ import (
 )
 
 type HealthHandler struct {
-	db *pgxpool.Pool
+	db          *pgxpool.Pool
+	environment string
 }
 
-func NewHealthHandler(db *pgxpool.Pool) *HealthHandler {
-	return &HealthHandler{db: db}
+func NewHealthHandler(db *pgxpool.Pool, environment string) *HealthHandler {
+	return &HealthHandler{db: db, environment: environment}
 }
 
 func (h *HealthHandler) Check(w http.ResponseWriter, r *http.Request) {
@@ -36,5 +37,9 @@ func (h *HealthHandler) Check(w http.ResponseWriter, r *http.Request) {
 	if status != "ok" {
 		httpStatus = http.StatusServiceUnavailable
 	}
-	respond.JSON(w, httpStatus, map[string]any{"status": status, "services": services})
+	resp := map[string]any{"status": status, "services": services}
+	if h.environment == "development" {
+		resp["dev_login"] = true
+	}
+	respond.JSON(w, httpStatus, resp)
 }

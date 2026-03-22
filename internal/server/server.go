@@ -67,7 +67,6 @@ func (s *Server) setupRouter() {
 	r.Use(NewStructuredLogger(s.logger))
 	r.Use(middleware.Recoverer)
 	r.Use(NewRateLimiter(100, 200).Middleware) // 100 req/s per IP, burst 200
-	r.Use(BodySizeLimit(1 << 20))              // 1 MB max
 	r.Use(SecurityHeaders)
 	r.Use(middleware.Compress(5))
 	r.Use(cors.Handler(cors.Options{
@@ -127,112 +126,131 @@ func (s *Server) setupRouter() {
 
 	authHandler := handler.NewAuthHandler(s.cfg, queries, s.db, jwtAuth)
 	workspaceSvc := service.NewWorkspaceService(queries, s.db)
-	workspaceHandler := handler.NewWorkspaceHandler(workspaceSvc, auditSvc)
+	workspaceHandler := handler.NewWorkspaceHandler(workspaceSvc, auditSvc, store, queries)
 	wsOrigins := []string{s.cfg.WebURL}
 	if s.cfg.Environment == "development" {
 		wsOrigins = append(wsOrigins, "http://localhost:5173")
 	}
 	runHandler := handler.NewRunHandler(s.runSvc, workspaceSvc, streamer, auditSvc, wsOrigins, store)
-	variableHandler := handler.NewVariableHandler(queries, encryptor, auditSvc, workspaceSvc)
+	variableHandler := handler.NewVariableHandler(queries, encryptor, auditSvc, workspaceSvc, store)
 	teamHandler := handler.NewTeamHandler(queries, auditSvc)
 	stateHandler := handler.NewStateHandler(queries, store)
 	s.approvalHandler = handler.NewApprovalHandler(queries, s.db, auditSvc)
 	auditHandler := handler.NewAuditHandler(queries)
-	healthHandler := handler.NewHealthHandler(s.db)
+	healthHandler := handler.NewHealthHandler(s.db, s.cfg.Environment)
 	userHandler := handler.NewUserHandler(queries, auditSvc)
 	webhookHandler := handler.NewWebhookHandler(queries, s.runSvc, auditSvc, s.cfg.WebhookSecret)
 
-	// Public routes
+	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Get("/health", healthHandler.Check)
-
-		// Auth routes
-		r.Get("/auth/github", authHandler.GitHubLogin)
-		r.Get("/auth/github/callback", authHandler.GitHubCallback)
-
-		// VCS webhooks (public, HMAC-verified)
-		r.Post("/webhooks/github", webhookHandler.GitHubPush)
-
-		// Protected routes
+		// Config upload route (50 MB limit, separate from default 1 MB)
 		r.Group(func(r chi.Router) {
+			r.Use(BodySizeLimit(50 << 20))
 			r.Use(authMiddleware.Authenticate)
+			r.With(auth.RequireRole("operator")).Post("/workspaces/{workspaceID}/upload", workspaceHandler.Upload)
+		})
 
-			r.Get("/auth/me", authHandler.Me)
+		// All other routes (1 MB limit)
+		r.Group(func(r chi.Router) {
+			r.Use(BodySizeLimit(1 << 20))
 
-			// Users (admin-only)
-			r.Route("/users", func(r chi.Router) {
-				r.With(auth.RequireRole("admin")).Get("/", userHandler.List)
-				r.With(auth.RequireRole("owner")).Put("/{userID}/role", userHandler.UpdateRole)
-			})
+			r.Get("/health", healthHandler.Check)
 
-			// Audit logs (admin-only)
-			r.With(auth.RequireRole("admin")).Get("/audit-logs", auditHandler.List)
+			// Auth routes
+			r.Get("/auth/github", authHandler.GitHubLogin)
+			r.Get("/auth/github/callback", authHandler.GitHubCallback)
+			if s.cfg.Environment == "development" {
+				r.Get("/auth/dev", authHandler.DevLogin)
+			}
 
-			// Teams
-			r.Route("/teams", func(r chi.Router) {
-				r.Get("/", teamHandler.List)
-				r.With(auth.RequireRole("admin")).Post("/", teamHandler.Create)
-				r.Route("/{teamID}", func(r chi.Router) {
-					r.Get("/", teamHandler.Get)
-					r.With(auth.RequireRole("admin")).Delete("/", teamHandler.Delete)
-					r.Get("/members", teamHandler.ListMembers)
-					r.With(auth.RequireRole("admin")).Post("/members", teamHandler.AddMember)
-					r.With(auth.RequireRole("admin")).Delete("/members/{userID}", teamHandler.RemoveMember)
+			// VCS webhooks (public, HMAC-verified)
+			r.Post("/webhooks/github", webhookHandler.GitHubPush)
+
+			// Protected routes
+			r.Group(func(r chi.Router) {
+				r.Use(authMiddleware.Authenticate)
+
+				r.Get("/auth/me", authHandler.Me)
+
+				// Users (admin-only)
+				r.Route("/users", func(r chi.Router) {
+					r.With(auth.RequireRole("admin")).Get("/", userHandler.List)
+					r.With(auth.RequireRole("owner")).Put("/{userID}/role", userHandler.UpdateRole)
 				})
-			})
 
-			// Workspaces
-			r.Route("/workspaces", func(r chi.Router) {
-				r.Get("/", workspaceHandler.List)
-				r.Post("/", workspaceHandler.Create)
-				r.Route("/{workspaceID}", func(r chi.Router) {
-					r.Get("/", workspaceHandler.Get)
-					r.Put("/", workspaceHandler.Update)
-					r.With(auth.RequireRole("admin")).Delete("/", workspaceHandler.Delete)
-					r.With(auth.RequireRole("operator")).Post("/lock", workspaceHandler.Lock)
-					r.With(auth.RequireRole("operator")).Post("/unlock", workspaceHandler.Unlock)
+				// Audit logs (admin-only)
+				r.With(auth.RequireRole("admin")).Get("/audit-logs", auditHandler.List)
 
-					// Variables
-					r.Route("/variables", func(r chi.Router) {
-						r.Get("/", variableHandler.List)
-						r.Post("/", variableHandler.Create)
-						r.Post("/discover", variableHandler.Discover)
-						r.Post("/bulk", variableHandler.BulkCreate)
-						r.Route("/{variableID}", func(r chi.Router) {
-							r.Put("/", variableHandler.Update)
-							r.Delete("/", variableHandler.Delete)
-							r.With(auth.RequireRole("operator")).Get("/value", variableHandler.RevealValue)
+				// Teams
+				r.Route("/teams", func(r chi.Router) {
+					r.Get("/", teamHandler.List)
+					r.With(auth.RequireRole("admin")).Post("/", teamHandler.Create)
+					r.Route("/{teamID}", func(r chi.Router) {
+						r.Get("/", teamHandler.Get)
+						r.With(auth.RequireRole("admin")).Delete("/", teamHandler.Delete)
+						r.Get("/members", teamHandler.ListMembers)
+						r.With(auth.RequireRole("admin")).Post("/members", teamHandler.AddMember)
+						r.With(auth.RequireRole("admin")).Delete("/members/{userID}", teamHandler.RemoveMember)
+					})
+				})
+
+				// Workspaces
+				r.Route("/workspaces", func(r chi.Router) {
+					r.Get("/", workspaceHandler.List)
+					r.Post("/", workspaceHandler.Create)
+					r.Route("/{workspaceID}", func(r chi.Router) {
+						r.Get("/", workspaceHandler.Get)
+						r.Put("/", workspaceHandler.Update)
+						r.With(auth.RequireRole("admin")).Delete("/", workspaceHandler.Delete)
+						r.With(auth.RequireRole("operator")).Post("/lock", workspaceHandler.Lock)
+						r.With(auth.RequireRole("operator")).Post("/unlock", workspaceHandler.Unlock)
+						r.With(auth.RequireRole("operator")).Post("/clone", workspaceHandler.Clone)
+
+						// Variables
+						r.Route("/variables", func(r chi.Router) {
+							r.Get("/", variableHandler.List)
+							r.Post("/", variableHandler.Create)
+							r.Post("/discover", variableHandler.Discover)
+							r.Post("/bulk", variableHandler.BulkCreate)
+							r.Post("/import-outputs", variableHandler.ImportOutputs)
+							r.Post("/copy", variableHandler.CopyVariables)
+							r.Route("/{variableID}", func(r chi.Router) {
+								r.Put("/", variableHandler.Update)
+								r.Delete("/", variableHandler.Delete)
+								r.With(auth.RequireRole("operator")).Get("/value", variableHandler.RevealValue)
+							})
 						})
-					})
 
-					// State versions
-					r.Route("/state", func(r chi.Router) {
-						r.Get("/", stateHandler.List)
-						r.Get("/current", stateHandler.GetCurrent)
-						r.Get("/current/resources", stateHandler.Resources)
-						r.Get("/diff", stateHandler.Diff)
-						r.Get("/{stateID}", stateHandler.Get)
-						r.Get("/{stateID}/download", stateHandler.Download)
-					})
+						// State versions
+						r.Route("/state", func(r chi.Router) {
+							r.Get("/", stateHandler.List)
+							r.Get("/current", stateHandler.GetCurrent)
+							r.Get("/current/resources", stateHandler.Resources)
+							r.Get("/current/outputs", stateHandler.Outputs)
+							r.Get("/diff", stateHandler.Diff)
+							r.Get("/{stateID}", stateHandler.Get)
+							r.Get("/{stateID}/download", stateHandler.Download)
+						})
 
-					// Team access
-					r.Get("/access", teamHandler.ListWorkspaceAccess)
-					r.With(auth.RequireRole("admin")).Post("/access", teamHandler.SetWorkspaceAccess)
-					r.With(auth.RequireRole("admin")).Delete("/access/{teamID}", teamHandler.RemoveWorkspaceAccess)
+						// Team access
+						r.Get("/access", teamHandler.ListWorkspaceAccess)
+						r.With(auth.RequireRole("admin")).Post("/access", teamHandler.SetWorkspaceAccess)
+						r.With(auth.RequireRole("admin")).Delete("/access/{teamID}", teamHandler.RemoveWorkspaceAccess)
 
-					// Runs
-					r.Route("/runs", func(r chi.Router) {
-						r.Get("/", runHandler.List)
-						r.Post("/", runHandler.Create)
-						r.Route("/{runID}", func(r chi.Router) {
-							r.Get("/", runHandler.Get)
-							r.Get("/plan-json", runHandler.GetPlanJSON)
-							r.Get("/logs/ws", runHandler.StreamLogs)
-							r.With(auth.RequireRole("operator")).Post("/cancel", runHandler.Cancel)
+						// Runs
+						r.Route("/runs", func(r chi.Router) {
+							r.Get("/", runHandler.List)
+							r.Post("/", runHandler.Create)
+							r.Route("/{runID}", func(r chi.Router) {
+								r.Get("/", runHandler.Get)
+								r.Get("/plan-json", runHandler.GetPlanJSON)
+								r.Get("/logs/ws", runHandler.StreamLogs)
+								r.With(auth.RequireRole("operator")).Post("/cancel", runHandler.Cancel)
 
-							// Approvals
-							r.Get("/approvals", s.approvalHandler.List)
-							r.Post("/approvals", s.approvalHandler.Create)
+								// Approvals
+								r.Get("/approvals", s.approvalHandler.List)
+								r.Post("/approvals", s.approvalHandler.Create)
+							})
 						})
 					})
 				})

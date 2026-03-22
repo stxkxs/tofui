@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { formatRelativeTime, formatDuration } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+import { navigate } from "@/hooks/useNavigate";
+import { Link } from "@/components/ui/link";
 import { ArrowLeft, Clock, Timer, GitCommit, XCircle, RotateCcw } from "lucide-react";
 import type { RunStatus, TofuPlanJSON } from "@/api/types";
 
@@ -70,7 +72,7 @@ export function RunView({ workspaceId, runId }: Props) {
     run?.status === "cancelled" ||
     run?.status === "discarded";
 
-  const hasChanges = !!run?.plan_output && isTerminal;
+  const hasChanges = !!run?.plan_json_url && isTerminal;
 
   const { data: planJSON } = useQuery({
     queryKey: ["plan-json", runId],
@@ -124,7 +126,7 @@ export function RunView({ workspaceId, runId }: Props) {
     },
     onSuccess: (newRun) => {
       toast.success("Retry run created");
-      window.location.href = `/workspaces/${workspaceId}/runs/${newRun.id}`;
+      navigate(`/workspaces/${workspaceId}/runs/${newRun.id}`);
     },
     onError: () => toast.error("Failed to retry run"),
   });
@@ -143,6 +145,10 @@ export function RunView({ workspaceId, runId }: Props) {
     enabled: isRunning || needsLogReplay,
     onData: handleData,
   });
+
+  // Track whether we've written stored output to avoid duplicating
+  const wroteOutputRef = useRef(false);
+  const [termReady, setTermReady] = useState(false);
 
   // Initialize terminal once on mount
   useEffect(() => {
@@ -179,6 +185,7 @@ export function RunView({ workspaceId, runId }: Props) {
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
     wroteOutputRef.current = false;
+    setTermReady(true);
 
     const observer = new ResizeObserver(() => {
       fitAddon.fit();
@@ -192,16 +199,15 @@ export function RunView({ workspaceId, runId }: Props) {
     };
   }, []);
 
-  // Write plan_output to terminal when a finished run's data arrives
-  const wroteOutputRef = useRef(false);
+  // Write plan_output to terminal when terminal is ready and run data is available
   useEffect(() => {
-    if (!terminalRef.current || wroteOutputRef.current) return;
+    if (!termReady || !terminalRef.current || wroteOutputRef.current) return;
     if (run?.plan_output && isTerminal) {
       terminalRef.current.clear();
       terminalRef.current.write(run.plan_output.replace(/\n/g, "\r\n"));
       wroteOutputRef.current = true;
     }
-  }, [run?.plan_output, isTerminal]);
+  }, [termReady, run?.plan_output, isTerminal]);
 
   if (isLoading) {
     return (
@@ -229,13 +235,13 @@ export function RunView({ workspaceId, runId }: Props) {
     <div className="h-full flex flex-col">
       {/* Header */}
       <div className="p-6 border-b border-border">
-        <a
+        <Link
           href={`/workspaces/${workspaceId}`}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-3"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           Back to workspace
-        </a>
+        </Link>
 
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -345,15 +351,25 @@ export function RunView({ workspaceId, runId }: Props) {
         </div>
       )}
 
-      {/* Terminal (Logs tab) */}
-      <div
-        className={cn(
-          "flex-1 bg-[#0a0a0a] min-h-0",
-          activeTab !== "logs" && "hidden"
-        )}
-      >
-        <div ref={termRef} className="h-full" role="log" aria-label="Run output logs" />
-      </div>
+      {/* Logs tab */}
+      {activeTab === "logs" && (
+        <div className="flex-1 min-h-0 overflow-auto bg-[#0a0a0a]">
+          {/* Live terminal for running jobs */}
+          <div
+            ref={termRef}
+            className={cn(
+              "h-full",
+              isTerminal && run?.plan_output && "hidden"
+            )}
+            role="log"
+            aria-label="Run output logs"
+          />
+          {/* Static log output for finished runs */}
+          {isTerminal && run?.plan_output && (
+            <pre className="p-4 text-sm font-mono text-[#e5e5e5] whitespace-pre-wrap">{run.plan_output}</pre>
+          )}
+        </div>
+      )}
 
       {/* Changes tab */}
       {activeTab === "changes" && hasChanges && (

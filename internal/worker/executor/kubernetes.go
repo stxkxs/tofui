@@ -92,7 +92,11 @@ func (e *KubernetesExecutor) Execute(ctx context.Context, params ExecuteParams) 
 	var tfVarLines []string
 	for _, v := range params.Variables {
 		if v.Category == "terraform" {
-			tfVarLines = append(tfVarLines, fmt.Sprintf("%s = %q", v.Key, v.Value))
+			if isHCLLiteral(v.Value) {
+				tfVarLines = append(tfVarLines, fmt.Sprintf("%s = %s", v.Key, v.Value))
+			} else {
+				tfVarLines = append(tfVarLines, fmt.Sprintf("%s = %q", v.Key, v.Value))
+			}
 		}
 	}
 	if len(tfVarLines) > 0 {
@@ -129,6 +133,13 @@ func (e *KubernetesExecutor) Execute(ctx context.Context, params ExecuteParams) 
 			},
 		},
 		Data: cmData,
+	}
+
+	// For upload workspaces, store the archive as binary data in the ConfigMap
+	if params.Source == "upload" && len(params.ArchiveData) > 0 {
+		cm.BinaryData = map[string][]byte{
+			"source.tar.gz": params.ArchiveData,
+		}
 	}
 
 	_, err := e.client.CoreV1().ConfigMaps(e.namespace).Create(ctx, cm, metav1.CreateOptions{})
@@ -194,7 +205,7 @@ func (e *KubernetesExecutor) Execute(ctx context.Context, params ExecuteParams) 
 		}
 	}
 
-	// For apply/destroy: the state file is output to stdout between markers
+	// For apply/destroy: extract raw state and decrypted state JSON from markers
 	if params.Operation == "apply" || params.Operation == "destroy" {
 		stateMarker := "===TOFUI_STATE_BEGIN==="
 		stateEndMarker := "===TOFUI_STATE_END==="
@@ -203,8 +214,17 @@ func (e *KubernetesExecutor) Execute(ctx context.Context, params ExecuteParams) 
 			if endIdx := strings.Index(stateData, stateEndMarker); endIdx != -1 {
 				stateData = strings.TrimSpace(stateData[:endIdx])
 				result.StateFile = []byte(stateData)
-				// Remove state data from output
 				result.Output = output[:idx]
+			}
+		}
+
+		jsonMarker := "===TOFUI_STATE_JSON_BEGIN==="
+		jsonEndMarker := "===TOFUI_STATE_JSON_END==="
+		if idx := strings.Index(result.Output, jsonMarker); idx != -1 {
+			jsonData := result.Output[idx+len(jsonMarker):]
+			if endIdx := strings.Index(jsonData, jsonEndMarker); endIdx != -1 {
+				result.StateJSON = []byte(strings.TrimSpace(jsonData[:endIdx]))
+				result.Output = result.Output[:idx]
 			}
 		}
 	}
@@ -218,10 +238,17 @@ func (e *KubernetesExecutor) buildScript(params ExecuteParams) string {
 
 	sb.WriteString("#!/bin/sh\nset -e\n\n")
 
-	// Clone repo
-	sb.WriteString(fmt.Sprintf("echo 'Cloning %s (branch: %s)...'\n", params.RepoURL, params.RepoBranch))
-	sb.WriteString(fmt.Sprintf("git clone --depth 1 --branch %s %s /work\n", params.RepoBranch, params.RepoURL))
-	sb.WriteString(fmt.Sprintf("cd /work/%s\n\n", params.WorkingDir))
+	// Get source: clone repo or extract uploaded archive
+	if params.Source == "upload" {
+		sb.WriteString("echo 'Extracting uploaded configuration...'\n")
+		sb.WriteString("cd /work\n")
+		sb.WriteString("tar xzf /config/source.tar.gz\n")
+		sb.WriteString(fmt.Sprintf("cd /work/%s\n\n", params.WorkingDir))
+	} else {
+		sb.WriteString(fmt.Sprintf("echo 'Cloning %s (branch: %s)...'\n", params.RepoURL, params.RepoBranch))
+		sb.WriteString(fmt.Sprintf("git clone --depth 1 --branch %s %s /work\n", params.RepoBranch, params.RepoURL))
+		sb.WriteString(fmt.Sprintf("cd /work/%s\n\n", params.WorkingDir))
+	}
 
 	// Copy tfvars if present
 	sb.WriteString("if [ -f /config/tofui.auto.tfvars ]; then cp /config/tofui.auto.tfvars .; fi\n\n")
@@ -250,6 +277,16 @@ func (e *KubernetesExecutor) buildScript(params ExecuteParams) string {
 	sb.WriteString("if [ -f tofui.auto.tfvars ]; then VAR_FILE='-var-file=tofui.auto.tfvars'; fi\n\n")
 
 	switch params.Operation {
+	case "test":
+		sb.WriteString("echo '$ tofu output -json'\n")
+		sb.WriteString("tofu output -json > outputs.json 2>/dev/null || echo 'Warning: tofu output failed (continuing anyway)'\n\n")
+		sb.WriteString("if [ ! -f smoke-test.sh ]; then\n")
+		sb.WriteString("  echo 'smoke-test.sh not found in working directory'\n")
+		sb.WriteString("  exit 1\n")
+		sb.WriteString("fi\n")
+		sb.WriteString("chmod +x smoke-test.sh\n")
+		sb.WriteString("echo '$ ./smoke-test.sh'\n")
+		sb.WriteString("./smoke-test.sh\n")
 	case "plan":
 		sb.WriteString("echo '$ tofu plan'\n")
 		// -detailed-exitcode: 0=no changes, 1=error, 2=changes detected
@@ -268,21 +305,29 @@ func (e *KubernetesExecutor) buildScript(params ExecuteParams) string {
 	case "apply":
 		sb.WriteString("echo '$ tofu apply'\n")
 		sb.WriteString("tofu apply -no-color -auto-approve $VAR_FILE\n")
-		sb.WriteString("\n# Output state for capture\n")
+		sb.WriteString("\n# Output raw state (may be encrypted) for restoration\n")
 		sb.WriteString("if [ -f terraform.tfstate ]; then\n")
 		sb.WriteString("  echo '===TOFUI_STATE_BEGIN==='\n")
 		sb.WriteString("  cat terraform.tfstate\n")
 		sb.WriteString("  echo '===TOFUI_STATE_END==='\n")
 		sb.WriteString("fi\n")
+		sb.WriteString("# Output decrypted state for resource browsing\n")
+		sb.WriteString("echo '===TOFUI_STATE_JSON_BEGIN==='\n")
+		sb.WriteString("tofu state pull\n")
+		sb.WriteString("echo '===TOFUI_STATE_JSON_END==='\n")
 	case "destroy":
 		sb.WriteString("echo '$ tofu destroy'\n")
 		sb.WriteString("tofu destroy -no-color -auto-approve $VAR_FILE\n")
-		sb.WriteString("\n# Output state for capture\n")
+		sb.WriteString("\n# Output raw state for restoration\n")
 		sb.WriteString("if [ -f terraform.tfstate ]; then\n")
 		sb.WriteString("  echo '===TOFUI_STATE_BEGIN==='\n")
 		sb.WriteString("  cat terraform.tfstate\n")
 		sb.WriteString("  echo '===TOFUI_STATE_END==='\n")
 		sb.WriteString("fi\n")
+		sb.WriteString("# Output decrypted state for resource browsing\n")
+		sb.WriteString("echo '===TOFUI_STATE_JSON_BEGIN==='\n")
+		sb.WriteString("tofu state pull\n")
+		sb.WriteString("echo '===TOFUI_STATE_JSON_END==='\n")
 	}
 
 	return sb.String()

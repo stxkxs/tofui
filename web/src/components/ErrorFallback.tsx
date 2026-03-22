@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { navigate } from "@/hooks/useNavigate";
 import { AlertTriangle } from "lucide-react";
 
 interface FallbackProps {
@@ -16,7 +17,7 @@ export function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
       </p>
       <div className="flex items-center gap-3">
         <Button onClick={resetErrorBoundary}>Try again</Button>
-        <Button variant="outline" onClick={() => (window.location.href = "/")}>
+        <Button variant="outline" onClick={() => navigate("/")}>
           Go to dashboard
         </Button>
       </div>

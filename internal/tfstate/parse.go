@@ -8,11 +8,27 @@ import (
 
 // TFState represents the top-level structure of an OpenTofu/Terraform state file.
 type TFState struct {
-	Version          int              `json:"version"`
-	TerraformVersion string           `json:"terraform_version"`
-	Serial           int              `json:"serial"`
-	Lineage          string           `json:"lineage"`
-	Resources        []TFStateResource `json:"resources"`
+	Version          int                        `json:"version"`
+	TerraformVersion string                     `json:"terraform_version"`
+	Serial           int                        `json:"serial"`
+	Lineage          string                     `json:"lineage"`
+	Outputs          map[string]TFStateOutput   `json:"outputs"`
+	Resources        []TFStateResource          `json:"resources"`
+}
+
+// TFStateOutput represents an output value in the state file.
+type TFStateOutput struct {
+	Value     interface{} `json:"value"`
+	Type      interface{} `json:"type"`
+	Sensitive bool        `json:"sensitive"`
+}
+
+// Output is a simplified output representation returned by the API.
+type Output struct {
+	Name      string      `json:"name"`
+	Value     interface{} `json:"value"`
+	Type      string      `json:"type"`
+	Sensitive bool        `json:"sensitive"`
 }
 
 // TFStateResource represents a resource block in the state file.
@@ -85,6 +101,53 @@ func ParseResources(data []byte) ([]Resource, error) {
 		resources = []Resource{}
 	}
 	return resources, nil
+}
+
+// ParseOutputs extracts output values from raw state JSON.
+func ParseOutputs(data []byte) ([]Output, error) {
+	var state TFState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("failed to parse state JSON: %w", err)
+	}
+
+	var outputs []Output
+	for name, out := range state.Outputs {
+		typeName := formatOutputType(out.Type)
+		value := out.Value
+		if out.Sensitive {
+			value = nil
+		}
+		outputs = append(outputs, Output{
+			Name:      name,
+			Value:     value,
+			Type:      typeName,
+			Sensitive: out.Sensitive,
+		})
+	}
+
+	if outputs == nil {
+		outputs = []Output{}
+	}
+	return outputs, nil
+}
+
+// formatOutputType converts the type field from a state file into a human-readable string.
+func formatOutputType(t interface{}) string {
+	switch v := t.(type) {
+	case string:
+		return v
+	case []interface{}:
+		if len(v) > 0 {
+			if s, ok := v[0].(string); ok {
+				return s
+			}
+		}
+		b, _ := json.Marshal(v)
+		return string(b)
+	default:
+		b, _ := json.Marshal(v)
+		return string(b)
+	}
 }
 
 // cleanProviderName strips the registry prefix from a provider string.

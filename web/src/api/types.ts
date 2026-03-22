@@ -18,6 +18,7 @@ export interface Workspace {
   org_id: string;
   name: string;
   description?: string;
+  source: "vcs" | "upload";
   repo_url: string;
   repo_branch: string;
   working_dir: string;
@@ -29,6 +30,7 @@ export interface Workspace {
   locked: boolean;
   locked_by?: string | null;
   current_run_id?: string | null;
+  current_config_version_id?: string;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -49,7 +51,7 @@ export type RunStatus =
   | "cancelled"
   | "discarded";
 
-export type RunOperation = "plan" | "apply" | "destroy";
+export type RunOperation = "plan" | "apply" | "destroy" | "import" | "test";
 
 export interface Run {
   id: string;
@@ -210,7 +212,8 @@ export interface ListResponse<T> {
 export interface CreateWorkspaceRequest {
   name: string;
   description?: string;
-  repo_url: string;
+  source?: "vcs" | "upload";
+  repo_url?: string;
   repo_branch?: string;
   working_dir?: string;
   tofu_version?: string;
@@ -248,6 +251,25 @@ export interface CreateVariableRequest {
 export interface ApprovalRequest {
   status: "approved" | "rejected";
   comment?: string;
+}
+
+export interface WorkspaceOutput {
+  name: string;
+  value: string;
+  type: string;
+}
+
+export interface StateOutput {
+  name: string;
+  value: unknown;
+  type: string;
+  sensitive: boolean;
+}
+
+export interface CloneWorkspaceRequest {
+  name: string;
+  description?: string;
+  environment?: string;
 }
 
 export interface DiscoveredVariable {
@@ -403,6 +425,26 @@ export interface paths {
       };
     };
   };
+  "/workspaces/{workspaceId}/upload": {
+    post: {
+      parameters: { path: { workspaceId: string } };
+      // Note: multipart/form-data, handled via fetch directly
+      responses: {
+        200: { content: { "application/json": Workspace } };
+      };
+    };
+  };
+  "/workspaces/{workspaceId}/clone": {
+    post: {
+      parameters: { path: { workspaceId: string } };
+      requestBody: {
+        content: { "application/json": CloneWorkspaceRequest };
+      };
+      responses: {
+        201: { content: { "application/json": Workspace } };
+      };
+    };
+  };
   "/workspaces/{workspaceId}/lock": {
     post: {
       parameters: { path: { workspaceId: string } };
@@ -461,6 +503,19 @@ export interface paths {
       };
     };
   };
+  "/workspaces/{workspaceId}/variables/copy": {
+    post: {
+      parameters: { path: { workspaceId: string } };
+      requestBody: {
+        content: {
+          "application/json": { source_workspace_id: string };
+        };
+      };
+      responses: {
+        201: { content: { "application/json": WorkspaceVariable[] } };
+      };
+    };
+  };
   "/workspaces/{workspaceId}/variables/{variableId}": {
     put: {
       parameters: { path: { workspaceId: string; variableId: string } };
@@ -508,6 +563,25 @@ export interface paths {
       parameters: { path: { workspaceId: string } };
       responses: {
         200: { content: { "application/json": StateResource[] } };
+      };
+    };
+  };
+  "/workspaces/{workspaceId}/state/current/outputs": {
+    get: {
+      parameters: { path: { workspaceId: string } };
+      responses: {
+        200: { content: { "application/json": StateOutput[] } };
+      };
+    };
+  };
+  "/workspaces/{workspaceId}/variables/import-outputs": {
+    post: {
+      parameters: { path: { workspaceId: string } };
+      requestBody: {
+        content: { "application/json": { source_workspace_id: string } };
+      };
+      responses: {
+        201: { content: { "application/json": WorkspaceVariable[] } };
       };
     };
   };

@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import type { Team, TeamMember } from "@/api/types";
+import type { Team, TeamMember, User } from "@/api/types";
+import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -199,6 +200,39 @@ function TeamDetail({
     },
   });
 
+  const [showAddMember, setShowAddMember] = useState(false);
+  const [addMemberUserId, setAddMemberUserId] = useState("");
+  const [addMemberRole, setAddMemberRole] = useState("viewer");
+
+  const { data: users } = useQuery({
+    queryKey: ["users"],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/users");
+      if (error) throw error;
+      return data as User[];
+    },
+    enabled: showAddMember,
+  });
+
+  const addMemberMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST("/teams/{teamId}/members", {
+        params: { path: { teamId: team.id } },
+        body: { user_id: addMemberUserId, role: addMemberRole },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["team-members", team.id] });
+      setShowAddMember(false);
+      setAddMemberUserId("");
+      setAddMemberRole("viewer");
+      toast.success("Member added");
+    },
+    onError: () => toast.error("Failed to add member"),
+  });
+
   const removeMemberMutation = useMutation({
     mutationFn: async (userId: string) => {
       const { error } = await api.DELETE("/teams/{teamId}/members/{userId}", {
@@ -221,7 +255,37 @@ function TeamDetail({
       </div>
 
       <div>
-        <h4 className="text-sm font-medium mb-2">Members</h4>
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-sm font-medium">Members</h4>
+          <Button size="sm" variant="outline" onClick={() => setShowAddMember(!showAddMember)}>
+            <Plus className="w-3 h-3" />
+            Add member
+          </Button>
+        </div>
+
+        {showAddMember && (
+          <div className="mb-3 p-3 rounded-lg border border-border bg-accent/20 space-y-2">
+            <Select value={addMemberUserId} onChange={(e) => setAddMemberUserId(e.target.value)}>
+              <option value="">Select user...</option>
+              {(users || [])
+                .filter((u: User) => !(members as TeamMember[] || []).some((m) => m.user_id === u.id))
+                .map((u: User) => (
+                  <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
+                ))}
+            </Select>
+            <Select value={addMemberRole} onChange={(e) => setAddMemberRole(e.target.value)}>
+              <option value="viewer">Viewer</option>
+              <option value="operator">Operator</option>
+              <option value="admin">Admin</option>
+            </Select>
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setShowAddMember(false)}>Cancel</Button>
+              <Button size="sm" onClick={() => addMemberMutation.mutate()} disabled={!addMemberUserId || addMemberMutation.isPending}>
+                {addMemberMutation.isPending ? <Spinner /> : "Add"}
+              </Button>
+            </div>
+          </div>
+        )}
         {isLoading ? (
           <Spinner className="w-4 h-4" />
         ) : !members?.length ? (

@@ -35,6 +35,7 @@ type CreateWorkspaceParams struct {
 	RequiresApproval  bool
 	VcsTriggerEnabled bool
 	CreatedBy         string
+	Source            string
 }
 
 type UpdateWorkspaceParams struct {
@@ -91,8 +92,12 @@ func (s *WorkspaceService) Get(ctx context.Context, id, orgID string) (repositor
 }
 
 func (s *WorkspaceService) Create(ctx context.Context, params CreateWorkspaceParams) (repository.Workspace, error) {
+	source := params.Source
+	if source == "" {
+		source = "vcs"
+	}
 	branch := params.RepoBranch
-	if branch == "" {
+	if branch == "" && source == "vcs" {
 		branch = "main"
 	}
 	workDir := params.WorkingDir
@@ -122,6 +127,7 @@ func (s *WorkspaceService) Create(ctx context.Context, params CreateWorkspacePar
 		RequiresApproval:  params.RequiresApproval,
 		VcsTriggerEnabled: params.VcsTriggerEnabled,
 		CreatedBy:         params.CreatedBy,
+		Source:            source,
 	})
 }
 

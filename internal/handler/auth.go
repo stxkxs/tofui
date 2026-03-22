@@ -214,6 +214,50 @@ func (h *AuthHandler) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)
 }
 
+func (h *AuthHandler) DevLogin(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.Environment != "development" {
+		respond.Error(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	ctx := r.Context()
+
+	org, err := h.ensureDefaultOrg(ctx)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to setup organization")
+		return
+	}
+
+	userCount, err := h.queries.CountUsersByOrg(ctx, org.ID)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to setup user")
+		return
+	}
+	role := assignRole(userCount)
+
+	user, err := h.queries.UpsertUserByEmail(ctx, repository.UpsertUserByEmailParams{
+		ID:        ulid.Make().String(),
+		OrgID:     org.ID,
+		Email:     "dev@tofui.local",
+		Name:      "Dev User",
+		AvatarURL: "",
+		Role:      role,
+	})
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to create dev user")
+		return
+	}
+
+	token, err := h.jwt.GenerateToken(user.ID, user.OrgID, user.Email, user.Role)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "failed to generate token")
+		return
+	}
+
+	redirectURL := fmt.Sprintf("%s/auth/callback?token=%s", h.cfg.WebURL, token)
+	http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)
+}
+
 func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	userCtx := auth.GetUser(r.Context())
 	if userCtx == nil {
