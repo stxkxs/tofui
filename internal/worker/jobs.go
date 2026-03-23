@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -25,11 +26,12 @@ type ImportResource struct {
 }
 
 type RunJobArgs struct {
-	RunID       string           `json:"run_id"`
-	WorkspaceID string           `json:"workspace_id"`
-	OrgID       string           `json:"org_id"`
-	Operation   string           `json:"operation"`
-	Imports     []ImportResource `json:"imports,omitempty"`
+	RunID             string           `json:"run_id"`
+	WorkspaceID       string           `json:"workspace_id"`
+	OrgID             string           `json:"org_id"`
+	Operation         string           `json:"operation"`
+	Imports           []ImportResource `json:"imports,omitempty"`
+	AutoApplyOverride *bool            `json:"auto_apply_override,omitempty"`
 }
 
 func (RunJobArgs) Kind() string { return "run" }
@@ -99,15 +101,51 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 		return w.failRun(ctx, args, logger, fmt.Errorf("failed to get workspace: %w", err), "")
 	}
 
-	// Load variables and decrypt sensitive ones
+	// Load and merge variables from all scopes: org < pipeline < workspace
+	var orgExecVars []executor.Variable
+	orgVars, _ := w.queries.ListOrgVariables(ctx, args.OrgID)
+	for _, v := range orgVars {
+		value := v.Value
+		if v.Sensitive && w.encryptor != nil {
+			decrypted, err := w.encryptor.Decrypt(v.Value)
+			if err != nil {
+				logger.Warn("failed to decrypt org variable, skipping", "key", v.Key, "error", err)
+				continue
+			}
+			value = decrypted
+		}
+		orgExecVars = append(orgExecVars, executor.Variable{Key: v.Key, Value: value, Category: v.Category})
+	}
+
+	var pipelineExecVars []executor.Variable
+	if prs, err := w.queries.GetPipelineRunStageByRunID(ctx, args.RunID); err == nil {
+		if pr, err := w.queries.GetPipelineRun(ctx, repository.GetPipelineRunParams{ID: prs.PipelineRunID, OrgID: args.OrgID}); err == nil {
+			pVars, _ := w.queries.ListPipelineVariables(ctx, repository.ListPipelineVariablesParams{
+				PipelineID: pr.PipelineID, OrgID: args.OrgID,
+			})
+			for _, v := range pVars {
+				value := v.Value
+				if v.Sensitive && w.encryptor != nil {
+					decrypted, err := w.encryptor.Decrypt(v.Value)
+					if err != nil {
+						logger.Warn("failed to decrypt pipeline variable, skipping", "key", v.Key, "error", err)
+						continue
+					}
+					value = decrypted
+				}
+				pipelineExecVars = append(pipelineExecVars, executor.Variable{Key: v.Key, Value: value, Category: v.Category})
+			}
+		}
+	}
+
 	vars, err := w.queries.ListWorkspaceVariables(ctx, repository.ListWorkspaceVariablesParams{
 		WorkspaceID: args.WorkspaceID, OrgID: args.OrgID,
 	})
 	if err != nil {
 		return w.failRun(ctx, args, logger, fmt.Errorf("failed to load variables: %w", err), "")
 	}
-	execVars := make([]executor.Variable, len(vars))
-	for i, v := range vars {
+	var wsExecVars []executor.Variable
+	for _, v := range vars {
 		value := v.Value
 		if v.Sensitive && w.encryptor != nil {
 			decrypted, err := w.encryptor.Decrypt(v.Value)
@@ -116,8 +154,10 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 			}
 			value = decrypted
 		}
-		execVars[i] = executor.Variable{Key: v.Key, Value: value, Category: v.Category}
+		wsExecVars = append(wsExecVars, executor.Variable{Key: v.Key, Value: value, Category: v.Category})
 	}
+
+	execVars := mergeVariables(orgExecVars, pipelineExecVars, wsExecVars)
 
 	// Fetch previous state from S3 for continuity
 	var previousState []byte
@@ -222,7 +262,11 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 	} else if args.Operation == "test" {
 		finalStatus = "applied" // test is terminal — "applied" prevents approval flow
 	} else if args.Operation == "plan" {
-		finalStatus = postPlanAction(workspace.AutoApply, workspace.RequiresApproval)
+		autoApply := workspace.AutoApply
+		if args.AutoApplyOverride != nil {
+			autoApply = *args.AutoApplyOverride
+		}
+		finalStatus = postPlanAction(autoApply, workspace.RequiresApproval)
 	}
 
 	// Upload logs to S3
@@ -354,6 +398,9 @@ func (w *RunJobWorker) Work(ctx context.Context, job *river.Job[RunJobArgs]) err
 
 	w.enqueueNextPendingRun(ctx, args.WorkspaceID, logger)
 
+	// Advance pipeline if this run belongs to one
+	w.advancePipelineIfNeeded(ctx, args.RunID, args.OrgID, finalStatus, logger)
+
 	logger.Info("run completed", "status", finalStatus)
 	return nil
 }
@@ -423,6 +470,166 @@ func toExecutorImports(imports []ImportResource) []executor.ImportResource {
 		result[i] = executor.ImportResource{Address: imp.Address, ID: imp.ID}
 	}
 	return result
+}
+
+// advancePipelineIfNeeded checks if the completed run belongs to a pipeline and advances it.
+func (w *RunJobWorker) advancePipelineIfNeeded(ctx context.Context, runID, orgID, finalStatus string, logger *slog.Logger) {
+	stage, err := w.queries.GetPipelineRunStageByRunID(ctx, runID)
+	if err != nil {
+		return // not a pipeline run — fast no-op
+	}
+
+	pr, err := w.queries.GetPipelineRun(ctx, repository.GetPipelineRunParams{ID: stage.PipelineRunID, OrgID: orgID})
+	if err != nil {
+		logger.Error("failed to get pipeline run for callback", "error", err)
+		return
+	}
+
+	if pr.Status != "running" {
+		return
+	}
+
+	logger = logger.With("pipeline_run_id", pr.ID, "stage_order", stage.StageOrder)
+
+	switch finalStatus {
+	case "applied":
+		// Stage completed successfully
+		w.queries.FinishPipelineRunStage(ctx, stage.ID, "completed")
+
+		nextOrder := stage.StageOrder + 1
+		if nextOrder >= pr.TotalStages {
+			w.queries.FinishPipelineRun(ctx, pr.ID, "completed")
+			logger.Info("pipeline completed")
+			return
+		}
+
+		// Enqueue next stage
+		if w.riverClient != nil && w.db != nil {
+			tx, err := w.db.Begin(ctx)
+			if err != nil {
+				logger.Error("failed to begin tx for next pipeline stage", "error", err)
+				return
+			}
+			defer tx.Rollback(ctx)
+
+			_, err = w.riverClient.InsertTx(ctx, tx, PipelineStageJobArgs{
+				PipelineRunID: pr.ID,
+				StageOrder:    nextOrder,
+				OrgID:         orgID,
+				CreatedBy:     pr.CreatedBy,
+			}, nil)
+			if err != nil {
+				logger.Error("failed to enqueue next pipeline stage", "error", err)
+				return
+			}
+			if err := tx.Commit(ctx); err != nil {
+				logger.Error("failed to commit next pipeline stage", "error", err)
+				return
+			}
+			logger.Info("enqueued next pipeline stage", "next_order", nextOrder)
+		}
+
+	case "errored":
+		w.queries.FinishPipelineRunStage(ctx, stage.ID, "errored")
+		if stage.OnFailure == "continue" {
+			nextOrder := stage.StageOrder + 1
+			if nextOrder >= pr.TotalStages {
+				w.queries.FinishPipelineRun(ctx, pr.ID, "errored")
+				return
+			}
+			if w.riverClient != nil && w.db != nil {
+				tx, err := w.db.Begin(ctx)
+				if err != nil {
+					return
+				}
+				defer tx.Rollback(ctx)
+				w.riverClient.InsertTx(ctx, tx, PipelineStageJobArgs{
+					PipelineRunID: pr.ID,
+					StageOrder:    nextOrder,
+					OrgID:         orgID,
+					CreatedBy:     pr.CreatedBy,
+				}, nil)
+				tx.Commit(ctx)
+			}
+		} else {
+			w.queries.CancelPendingPipelineRunStages(ctx, pr.ID)
+			w.queries.FinishPipelineRun(ctx, pr.ID, "errored")
+			logger.Info("pipeline errored due to stage failure")
+		}
+
+	case "planned", "awaiting_approval":
+		// Pipeline pauses — update stage status
+		w.queries.UpdatePipelineRunStageStatus(ctx, repository.UpdatePipelineRunStageStatusParams{
+			ID: stage.ID, Status: "awaiting_approval",
+		})
+		logger.Info("pipeline paused at stage awaiting approval")
+
+	case "queued":
+		// Auto-apply was triggered, stage still running — no action needed
+
+	default:
+		logger.Info("unhandled pipeline run status", "final_status", finalStatus)
+	}
+}
+
+// mergeVariables combines variables from three scopes. Later scopes override earlier.
+// Precedence: org < pipeline < workspace (workspace always wins).
+// mergeVariables combines variables from three scopes. Later scopes override earlier.
+// Precedence: org < pipeline < workspace (workspace always wins).
+// Special case: "tags" (category terraform) is deep-merged as a JSON map across scopes.
+func mergeVariables(orgVars, pipelineVars, workspaceVars []executor.Variable) []executor.Variable {
+	merged := make(map[string]executor.Variable)
+	for _, v := range orgVars {
+		merged[v.Key+"|"+v.Category] = v
+	}
+	for _, v := range pipelineVars {
+		mergeVar(merged, v)
+	}
+	for _, v := range workspaceVars {
+		mergeVar(merged, v)
+	}
+	result := make([]executor.Variable, 0, len(merged))
+	for _, v := range merged {
+		result = append(result, v)
+	}
+	return result
+}
+
+func mergeVar(merged map[string]executor.Variable, v executor.Variable) {
+	key := v.Key + "|" + v.Category
+	existing, exists := merged[key]
+	if exists && v.Category == "terraform" && isTagsKey(v.Key) {
+		// Deep merge JSON maps for tag variables
+		if m := deepMergeJSON(existing.Value, v.Value); m != "" {
+			v.Value = m
+		}
+	}
+	merged[key] = v
+}
+
+// isTagsKey returns true for variables that should be deep-merged as maps.
+func isTagsKey(key string) bool {
+	return key == "tags" || key == "default_tags" || key == "extra_tags" ||
+		strings.HasSuffix(key, "_tags")
+}
+
+// deepMergeJSON merges two JSON object strings. Keys in b override keys in a.
+func deepMergeJSON(a, b string) string {
+	var mapA, mapB map[string]interface{}
+	if json.Unmarshal([]byte(a), &mapA) != nil {
+		return ""
+	}
+	if json.Unmarshal([]byte(b), &mapB) != nil {
+		return ""
+	}
+	for k, v := range mapB {
+		mapA[k] = v
+	}
+	out, err := json.Marshal(mapA)
+	if err != nil {
+		return ""
+	}
+	return string(out)
 }
 
 func (w *RunJobWorker) enqueueNextPendingRun(ctx context.Context, workspaceID string, logger *slog.Logger) {

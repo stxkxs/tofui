@@ -32,6 +32,16 @@ services:
     volumes:
       - miniodata:/data
 
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.migrate
+    environment:
+      DATABASE_URL: "postgres://tofui:tofui@postgres:5432/tofui?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   pgdata:
   miniodata:

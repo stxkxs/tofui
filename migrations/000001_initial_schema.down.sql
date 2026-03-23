@@ -1,3 +1,11 @@
+DROP TABLE IF EXISTS pipeline_variables;
+DROP TABLE IF EXISTS org_variables;
+DROP TABLE IF EXISTS pipeline_run_stages;
+DROP TABLE IF EXISTS pipeline_runs;
+DROP TABLE IF EXISTS pipeline_stages;
+DROP TABLE IF EXISTS pipelines;
+DROP TYPE IF EXISTS pipeline_stage_status;
+DROP TYPE IF EXISTS pipeline_status;
 DROP TRIGGER IF EXISTS audit_logs_no_update ON audit_logs;
 DROP FUNCTION IF EXISTS prevent_audit_log_modification();
 DROP TABLE IF EXISTS workspace_variables;

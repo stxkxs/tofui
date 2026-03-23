@@ -120,3 +120,88 @@ type WorkspaceVariable struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
+
+type OrgVariable struct {
+	ID          string    `json:"id"`
+	OrgID       string    `json:"org_id"`
+	Key         string    `json:"key"`
+	Value       string    `json:"value"`
+	Sensitive   bool      `json:"sensitive"`
+	Category    string    `json:"category"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type PipelineVariable struct {
+	ID          string    `json:"id"`
+	PipelineID  string    `json:"pipeline_id"`
+	OrgID       string    `json:"org_id"`
+	Key         string    `json:"key"`
+	Value       string    `json:"value"`
+	Sensitive   bool      `json:"sensitive"`
+	Category    string    `json:"category"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type Pipeline struct {
+	ID          string    `json:"id"`
+	OrgID       string    `json:"org_id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	CreatedBy   string    `json:"created_by"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type PipelineStage struct {
+	ID          string    `json:"id"`
+	PipelineID  string    `json:"pipeline_id"`
+	WorkspaceID string    `json:"workspace_id"`
+	StageOrder  int32     `json:"stage_order"`
+	AutoApply   bool      `json:"auto_apply"`
+	OnFailure   string    `json:"on_failure"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type PipelineStageWithWorkspace struct {
+	PipelineStage
+	WorkspaceName string `json:"workspace_name"`
+}
+
+type PipelineRun struct {
+	ID           string     `json:"id"`
+	PipelineID   string     `json:"pipeline_id"`
+	OrgID        string     `json:"org_id"`
+	Status       string     `json:"status"`
+	CurrentStage int32      `json:"current_stage"`
+	TotalStages  int32      `json:"total_stages"`
+	CreatedBy    string     `json:"created_by"`
+	StartedAt    time.Time  `json:"started_at"`
+	FinishedAt   *time.Time `json:"finished_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+type PipelineRunStage struct {
+	ID            string     `json:"id"`
+	PipelineRunID string     `json:"pipeline_run_id"`
+	StageID       string     `json:"stage_id"`
+	WorkspaceID   string     `json:"workspace_id"`
+	RunID         *string    `json:"run_id,omitempty"`
+	StageOrder    int32      `json:"stage_order"`
+	Status        string     `json:"status"`
+	AutoApply     bool       `json:"auto_apply"`
+	OnFailure     string     `json:"on_failure"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
+	FinishedAt    *time.Time `json:"finished_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+}
+
+type PipelineRunStageWithWorkspace struct {
+	PipelineRunStage
+	WorkspaceName string `json:"workspace_name"`
+}

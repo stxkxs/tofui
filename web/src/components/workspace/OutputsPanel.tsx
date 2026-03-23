@@ -121,7 +121,7 @@ export function OutputsPanel({ workspaceId }: Props) {
                     {output.sensitive ? (
                       <span className="text-sm font-mono text-muted-foreground">***</span>
                     ) : (
-                      <span className="text-sm font-mono text-muted-foreground max-w-[300px] truncate">
+                      <span className="text-sm font-mono text-muted-foreground break-all">
                         {formatInlineValue(output.value)}
                       </span>
                     )}

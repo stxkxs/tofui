@@ -79,14 +79,15 @@ type UpdateWorkspaceVariableParams struct {
 	Value       string
 	Sensitive   bool
 	Description string
+	Category    string
 }
 
 func (q *Queries) UpdateWorkspaceVariable(ctx context.Context, arg UpdateWorkspaceVariableParams) (WorkspaceVariable, error) {
 	row := q.db.QueryRow(ctx,
-		`UPDATE workspace_variables SET value = $3, sensitive = $4, description = $5, updated_at = NOW()
+		`UPDATE workspace_variables SET value = $3, sensitive = $4, description = $5, category = COALESCE(NULLIF($6, ''), category), updated_at = NOW()
 		WHERE id = $1 AND org_id = $2
 		RETURNING `+varColumns,
-		arg.ID, arg.OrgID, arg.Value, arg.Sensitive, arg.Description,
+		arg.ID, arg.OrgID, arg.Value, arg.Sensitive, arg.Description, arg.Category,
 	)
 	return scanVariable(row)
 }

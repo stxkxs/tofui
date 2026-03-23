@@ -54,7 +54,6 @@ export function Dialog({ open, onClose, children }: DialogProps) {
       document.addEventListener("keydown", handleFocusTrap);
       document.body.style.overflow = "hidden";
 
-      // Focus first focusable element on open
       requestAnimationFrame(() => {
         if (contentRef.current) {
           const first = contentRef.current.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
@@ -79,11 +78,11 @@ export function Dialog({ open, onClose, children }: DialogProps) {
       aria-labelledby="dialog-title"
     >
       <div
-        className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+        className="fixed inset-0 bg-black/70 backdrop-blur-md transition-opacity duration-200"
         aria-hidden="true"
         onClick={onClose}
       />
-      <div ref={contentRef} className="relative z-50 w-full max-w-lg mx-4">
+      <div ref={contentRef} className="relative z-50 w-full max-w-lg mx-4 animate-fade-up">
         {children}
       </div>
     </div>
@@ -101,7 +100,7 @@ export function DialogContent({
   return (
     <div
       className={cn(
-        "rounded-xl border border-border bg-card p-6 shadow-2xl animate-in fade-in-0 zoom-in-95",
+        "rounded-xl border border-border/60 bg-card/95 backdrop-blur-sm p-6 shadow-2xl shadow-black/40",
         className
       )}
       onClick={(e: MouseEvent) => e.stopPropagation()}
@@ -113,7 +112,7 @@ export function DialogContent({
 }
 
 export function DialogHeader({ children }: { children: ReactNode }) {
-  return <div className="mb-4">{children}</div>;
+  return <div className="mb-5">{children}</div>;
 }
 
 export function DialogTitle({
@@ -138,5 +137,5 @@ export function DialogDescription({
 }: {
   children: ReactNode;
 }) {
-  return <p className="text-sm text-muted-foreground mt-1">{children}</p>;
+  return <p className="text-sm text-muted-foreground mt-1.5">{children}</p>;
 }

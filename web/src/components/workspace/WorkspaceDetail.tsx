@@ -6,6 +6,7 @@ import type { Run, Workspace } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { RunStatusBadge } from "@/components/run/RunStatusBadge";
 import { VariablesPanel } from "@/components/workspace/VariablesPanel";
@@ -621,15 +622,14 @@ export function WorkspaceDetail({ workspaceId }: Props) {
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">Environment</label>
-                <select
+                <Select
                   value={cloneEnvironment}
                   onChange={(e) => setCloneEnvironment(e.target.value)}
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
                 >
                   <option value="development">development</option>
                   <option value="staging">staging</option>
                   <option value="production">production</option>
-                </select>
+                </Select>
               </div>
               <div className="flex justify-end gap-2 pt-2">
                 <Button

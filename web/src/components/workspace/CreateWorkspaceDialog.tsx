@@ -61,6 +61,8 @@ export function CreateWorkspaceDialog({
     register,
     handleSubmit,
     reset,
+    watch,
+    setValue,
     formState: { errors },
   } = useForm<CreateWorkspaceRequest>({
     resolver: zodResolver(schema),
@@ -222,7 +224,10 @@ export function CreateWorkspaceDialog({
               <label className="block text-sm font-medium mb-1.5">
                 Environment
               </label>
-              <Select {...register("environment")}>
+              <Select
+                value={watch("environment")}
+                onChange={(e) => setValue("environment", e.target.value as CreateWorkspaceRequest["environment"])}
+              >
                 <option value="development">Development</option>
                 <option value="staging">Staging</option>
                 <option value="production">Production</option>

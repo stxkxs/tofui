@@ -151,11 +151,12 @@ CREATE INDEX idx_teams_org_id ON teams(org_id);
 
 -- Team memberships
 CREATE TABLE team_members (
-    id         TEXT PRIMARY KEY,
-    team_id    TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    role       user_role NOT NULL DEFAULT 'viewer',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    id           TEXT PRIMARY KEY,
+    team_id      TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role         user_role NOT NULL DEFAULT 'viewer',
+    cloud_identity TEXT NOT NULL DEFAULT '',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(team_id, user_id)
 );
 
@@ -233,3 +234,123 @@ CREATE TABLE workspace_variables (
 );
 
 CREATE INDEX idx_workspace_variables_workspace_id ON workspace_variables(workspace_id);
+
+-- Pipeline status enums
+CREATE TYPE pipeline_status AS ENUM (
+    'idle',
+    'running',
+    'completed',
+    'errored',
+    'cancelled'
+);
+
+CREATE TYPE pipeline_stage_status AS ENUM (
+    'pending',
+    'importing_outputs',
+    'running',
+    'awaiting_approval',
+    'completed',
+    'errored',
+    'skipped',
+    'cancelled'
+);
+
+-- Pipelines
+CREATE TABLE pipelines (
+    id          TEXT PRIMARY KEY,
+    org_id      TEXT NOT NULL REFERENCES organizations(id),
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    created_by  TEXT NOT NULL REFERENCES users(id),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(org_id, name)
+);
+
+CREATE INDEX idx_pipelines_org_id ON pipelines(org_id);
+
+-- Pipeline stages (ordered workspace sequence)
+CREATE TABLE pipeline_stages (
+    id           TEXT PRIMARY KEY,
+    pipeline_id  TEXT NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+    stage_order  INT NOT NULL,
+    auto_apply   BOOLEAN NOT NULL DEFAULT FALSE,
+    on_failure   TEXT NOT NULL DEFAULT 'stop',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(pipeline_id, stage_order)
+);
+
+CREATE INDEX idx_pipeline_stages_pipeline_id ON pipeline_stages(pipeline_id);
+
+-- Pipeline runs (execution instances)
+CREATE TABLE pipeline_runs (
+    id            TEXT PRIMARY KEY,
+    pipeline_id   TEXT NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+    org_id        TEXT NOT NULL REFERENCES organizations(id),
+    status        pipeline_status NOT NULL DEFAULT 'running',
+    current_stage INT NOT NULL DEFAULT 0,
+    total_stages  INT NOT NULL DEFAULT 0,
+    created_by    TEXT NOT NULL REFERENCES users(id),
+    started_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at   TIMESTAMPTZ,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_pipeline_runs_pipeline_id ON pipeline_runs(pipeline_id);
+CREATE INDEX idx_pipeline_runs_org_id ON pipeline_runs(org_id);
+CREATE INDEX idx_pipeline_runs_status ON pipeline_runs(status);
+
+-- Pipeline run stages (per-stage tracking within a run)
+CREATE TABLE pipeline_run_stages (
+    id              TEXT PRIMARY KEY,
+    pipeline_run_id TEXT NOT NULL REFERENCES pipeline_runs(id) ON DELETE CASCADE,
+    stage_id        TEXT NOT NULL REFERENCES pipeline_stages(id),
+    workspace_id    TEXT NOT NULL REFERENCES workspaces(id),
+    run_id          TEXT REFERENCES runs(id),
+    stage_order     INT NOT NULL,
+    status          pipeline_stage_status NOT NULL DEFAULT 'pending',
+    auto_apply      BOOLEAN NOT NULL DEFAULT FALSE,
+    on_failure      TEXT NOT NULL DEFAULT 'stop',
+    started_at      TIMESTAMPTZ,
+    finished_at     TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_pipeline_run_stages_pipeline_run_id ON pipeline_run_stages(pipeline_run_id);
+CREATE INDEX idx_pipeline_run_stages_run_id ON pipeline_run_stages(run_id) WHERE run_id IS NOT NULL;
+
+-- Org-level variable defaults
+CREATE TABLE org_variables (
+    id          TEXT PRIMARY KEY,
+    org_id      TEXT NOT NULL REFERENCES organizations(id),
+    key         TEXT NOT NULL,
+    value       TEXT NOT NULL,
+    sensitive   BOOLEAN NOT NULL DEFAULT FALSE,
+    category    TEXT NOT NULL DEFAULT 'terraform',
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(org_id, key, category)
+);
+
+CREATE INDEX idx_org_variables_org_id ON org_variables(org_id);
+
+-- Pipeline-level variable defaults
+CREATE TABLE pipeline_variables (
+    id          TEXT PRIMARY KEY,
+    pipeline_id TEXT NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+    org_id      TEXT NOT NULL REFERENCES organizations(id),
+    key         TEXT NOT NULL,
+    value       TEXT NOT NULL,
+    sensitive   BOOLEAN NOT NULL DEFAULT FALSE,
+    category    TEXT NOT NULL DEFAULT 'terraform',
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(pipeline_id, key, category)
+);
+
+CREATE INDEX idx_pipeline_variables_pipeline_id ON pipeline_variables(pipeline_id);
