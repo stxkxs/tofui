@@ -12,7 +12,13 @@ tasks:
   # === Development ===
 
   dev:
-    desc: Run all services for local development
+    desc: Run all services for local development (migrates first, then starts all)
+    cmds:
+      - task: db:migrate
+      - task: dev:run
+
+  dev:run:
+    desc: Start server, worker, and web in parallel
     deps: [dev:server, dev:worker, dev:web]
 
   dev:server:

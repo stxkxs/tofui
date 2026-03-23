@@ -1,6 +1,6 @@
 module github.com/stxkxs/tofui
 
-go 1.25.6
+go 1.26
 
 require (
 	github.com/caarlos0/env/v11 v11.4.0
