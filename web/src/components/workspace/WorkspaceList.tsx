@@ -192,7 +192,7 @@ export function WorkspaceList() {
                       )}
                     </div>
                     {workspace.description && (
-                      <p className="text-sm text-muted-foreground mb-3 line-clamp-1">{workspace.description}</p>
+                      <p className="text-sm text-muted-foreground mb-3">{workspace.description}</p>
                     )}
                     <div className="flex items-center gap-4 text-xs text-muted-foreground">
                       {workspace.source === "upload" ? (

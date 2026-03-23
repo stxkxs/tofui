@@ -90,6 +90,8 @@ export function WorkspaceSettings({ workspace }: Props) {
   const {
     register,
     handleSubmit,
+    watch,
+    setValue,
     formState: { errors, isDirty },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -189,7 +191,10 @@ export function WorkspaceSettings({ workspace }: Props) {
           </div>
           <div>
             <label className="block text-sm font-medium mb-1.5">Environment</label>
-            <Select {...register("environment")}>
+            <Select
+              value={watch("environment")}
+              onChange={(e) => setValue("environment", e.target.value as FormValues["environment"], { shouldDirty: true })}
+            >
               <option value="development">Development</option>
               <option value="staging">Staging</option>
               <option value="production">Production</option>

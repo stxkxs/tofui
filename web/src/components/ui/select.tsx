@@ -1,23 +1,247 @@
-import { forwardRef, type SelectHTMLAttributes } from "react";
+import {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  type ReactNode,
+} from "react";
 import { cn } from "@/lib/utils";
+import { ChevronDown } from "lucide-react";
 
-const Select = forwardRef<
-  HTMLSelectElement,
-  SelectHTMLAttributes<HTMLSelectElement>
->(({ className, children, ...props }, ref) => {
-  return (
-    <select
-      className={cn(
-        "flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
-        className
-      )}
-      ref={ref}
-      {...props}
-    >
-      {children}
-    </select>
+export interface SelectOption {
+  value: string;
+  label: string;
+  disabled?: boolean;
+}
+
+interface SelectProps {
+  value?: string;
+  onChange?: (e: { target: { value: string } }) => void;
+  children?: ReactNode;
+  className?: string;
+  placeholder?: string;
+  disabled?: boolean;
+}
+
+/**
+ * Custom select that matches the dark water theme.
+ *
+ * Accepts either:
+ *   - `<option>` children (parsed automatically) — drop-in replacement for native select
+ *   - explicit options via the options prop (future)
+ *
+ * The onChange signature matches native select: `(e: { target: { value } }) => void`
+ */
+export function Select({
+  value,
+  onChange,
+  children,
+  className,
+  placeholder,
+  disabled,
+}: SelectProps) {
+  const [open, setOpen] = useState(false);
+  const [highlightIndex, setHighlightIndex] = useState(-1);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // Parse <option> children into structured options
+  const options = parseOptions(children);
+
+  const selected = options.find((o) => o.value === value);
+  const displayLabel =
+    selected?.label || placeholder || options[0]?.label || "";
+
+  const select = useCallback(
+    (val: string) => {
+      onChange?.({ target: { value: val } });
+      setOpen(false);
+      setHighlightIndex(-1);
+    },
+    [onChange]
   );
-});
-Select.displayName = "Select";
 
-export { Select };
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+        setHighlightIndex(-1);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  // Keyboard navigation
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (disabled) return;
+
+      if (!open) {
+        if (
+          e.key === "Enter" ||
+          e.key === " " ||
+          e.key === "ArrowDown" ||
+          e.key === "ArrowUp"
+        ) {
+          e.preventDefault();
+          setOpen(true);
+          const idx = options.findIndex((o) => o.value === value);
+          setHighlightIndex(idx >= 0 ? idx : 0);
+        }
+        return;
+      }
+
+      switch (e.key) {
+        case "ArrowDown":
+          e.preventDefault();
+          setHighlightIndex((prev) => {
+            let next = prev + 1;
+            while (next < options.length && options[next].disabled) next++;
+            return next < options.length ? next : prev;
+          });
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          setHighlightIndex((prev) => {
+            let next = prev - 1;
+            while (next >= 0 && options[next].disabled) next--;
+            return next >= 0 ? next : prev;
+          });
+          break;
+        case "Enter":
+        case " ":
+          e.preventDefault();
+          if (
+            highlightIndex >= 0 &&
+            !options[highlightIndex].disabled
+          ) {
+            select(options[highlightIndex].value);
+          }
+          break;
+        case "Escape":
+          e.preventDefault();
+          setOpen(false);
+          setHighlightIndex(-1);
+          break;
+      }
+    },
+    [open, disabled, options, value, highlightIndex, select]
+  );
+
+  // Scroll highlighted item into view
+  useEffect(() => {
+    if (!open || highlightIndex < 0 || !listRef.current) return;
+    const items = listRef.current.children;
+    if (items[highlightIndex]) {
+      (items[highlightIndex] as HTMLElement).scrollIntoView({
+        block: "nearest",
+      });
+    }
+  }, [highlightIndex, open]);
+
+  return (
+    <div ref={containerRef} className={cn("relative", className)}>
+      <button
+        type="button"
+        role="combobox"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        disabled={disabled}
+        onClick={() => {
+          if (!disabled) {
+            setOpen(!open);
+            if (!open) {
+              const idx = options.findIndex((o) => o.value === value);
+              setHighlightIndex(idx >= 0 ? idx : 0);
+            }
+          }
+        }}
+        onKeyDown={handleKeyDown}
+        className={cn(
+          "flex h-9 w-full items-center justify-between rounded-lg border border-input bg-background/50 px-3 text-sm transition-all duration-150",
+          "hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:border-primary/40",
+          "disabled:cursor-not-allowed disabled:opacity-40",
+          open && "ring-2 ring-ring/40 border-primary/40",
+        )}
+      >
+        <span
+          className={cn(
+            !selected || (selected.value === "" && placeholder)
+              ? "text-muted-foreground/60"
+              : ""
+          )}
+        >
+          {displayLabel}
+        </span>
+        <ChevronDown
+          className={cn(
+            "w-3.5 h-3.5 text-muted-foreground/50 shrink-0 ml-2 transition-transform duration-150",
+            open && "rotate-180"
+          )}
+        />
+      </button>
+
+      {open && (
+        <div
+          ref={listRef}
+          role="listbox"
+          className="absolute z-50 mt-1 w-full min-w-[8rem] max-h-60 overflow-auto rounded-lg border border-border/60 bg-card/95 backdrop-blur-md shadow-xl shadow-black/30 py-1 animate-fade-up"
+          style={{ animationDuration: "120ms" }}
+        >
+          {options.map((option, i) => {
+            const isSelected = option.value === value;
+            const isHighlighted = i === highlightIndex;
+            return (
+              <div
+                key={`${option.value}-${i}`}
+                role="option"
+                aria-selected={isSelected}
+                aria-disabled={option.disabled}
+                onClick={() => {
+                  if (!option.disabled) select(option.value);
+                }}
+                onMouseEnter={() => {
+                  if (!option.disabled) setHighlightIndex(i);
+                }}
+                className={cn(
+                  "px-3 py-1.5 text-sm cursor-pointer transition-colors duration-75",
+                  option.disabled && "opacity-40 cursor-not-allowed",
+                  isHighlighted && !option.disabled && "bg-accent/50",
+                  isSelected && "text-primary border-l-2 border-primary pl-2.5",
+                  !isSelected && "border-l-2 border-transparent",
+                )}
+              >
+                <span>{option.label}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Parse <option> children into SelectOption[] */
+function parseOptions(children: ReactNode): SelectOption[] {
+  const opts: SelectOption[] = [];
+  const items = Array.isArray(children) ? children : [children];
+
+  for (const child of items.flat(Infinity)) {
+    if (!child || typeof child !== "object" || !("props" in child)) continue;
+    const props = child.props as Record<string, unknown>;
+    if (child.type === "option") {
+      opts.push({
+        value: String(props.value ?? props.children ?? ""),
+        label: String(props.children ?? props.value ?? ""),
+        disabled: Boolean(props.disabled),
+      });
+    }
+  }
+  return opts;
+}

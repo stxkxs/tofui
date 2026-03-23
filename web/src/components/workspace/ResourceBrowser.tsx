@@ -44,10 +44,10 @@ function ResourceRow({ resource }: { resource: StateResource }) {
           <div className="rounded border border-border divide-y divide-border text-xs font-mono">
             {attrEntries.map(([key, value]) => (
               <div key={key} className="flex px-3 py-1.5">
-                <span className="text-muted-foreground w-48 shrink-0 truncate">
+                <span className="text-muted-foreground w-48 shrink-0">
                   {key}
                 </span>
-                <span className="text-foreground/80 truncate">
+                <span className="text-foreground/80 break-all">
                   {typeof value === "object"
                     ? JSON.stringify(value)
                     : String(value ?? "null")}

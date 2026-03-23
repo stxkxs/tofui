@@ -93,7 +93,7 @@ export function ConfigUpload({ workspaceId, currentConfigVersion }: Props) {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".tar.gz,.tgz"
+              accept="*/*"
               className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0];

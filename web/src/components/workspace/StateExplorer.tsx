@@ -5,6 +5,7 @@ import { api } from "@/api/client";
 import type { StateVersion, StateDiff } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { ResourceBrowser } from "./ResourceBrowser";
 import { StateDiffViewer } from "./StateDiffViewer";
@@ -162,10 +163,10 @@ export function StateExplorer({ workspaceId }: Props) {
           <div className="flex items-center gap-3 mb-3">
             <div className="flex items-center gap-2">
               <label className="text-sm text-muted-foreground">From serial:</label>
-              <select
-                value={fromSerial}
+              <Select
+                value={String(fromSerial)}
                 onChange={(e) => setFromSerial(Number(e.target.value))}
-                className="text-sm border border-border rounded px-2 py-1 bg-background"
+                placeholder="Select..."
               >
                 <option value="">Select...</option>
                 {(versions as StateVersion[]).map((sv) => (
@@ -173,15 +174,15 @@ export function StateExplorer({ workspaceId }: Props) {
                     #{sv.serial}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <span className="text-muted-foreground">→</span>
             <div className="flex items-center gap-2">
               <label className="text-sm text-muted-foreground">To serial:</label>
-              <select
-                value={toSerial}
+              <Select
+                value={String(toSerial)}
                 onChange={(e) => setToSerial(Number(e.target.value))}
-                className="text-sm border border-border rounded px-2 py-1 bg-background"
+                placeholder="Select..."
               >
                 <option value="">Select...</option>
                 {(versions as StateVersion[]).map((sv) => (
@@ -189,7 +190,7 @@ export function StateExplorer({ workspaceId }: Props) {
                     #{sv.serial}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           </div>
 
