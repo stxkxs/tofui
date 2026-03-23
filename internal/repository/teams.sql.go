@@ -15,14 +15,15 @@ type Team struct {
 }
 
 type TeamMember struct {
-	ID        string    `json:"id"`
-	TeamID    string    `json:"team_id"`
-	UserID    string    `json:"user_id"`
-	Role      string    `json:"role"`
-	CreatedAt time.Time `json:"created_at"`
-	Email     string    `json:"email"`
-	UserName  string    `json:"user_name"`
-	AvatarURL string    `json:"avatar_url"`
+	ID         string    `json:"id"`
+	TeamID     string    `json:"team_id"`
+	UserID     string    `json:"user_id"`
+	Role       string    `json:"role"`
+	CloudIdentity string    `json:"cloud_identity"`
+	CreatedAt  time.Time `json:"created_at"`
+	Email      string    `json:"email"`
+	UserName   string    `json:"user_name"`
+	AvatarURL  string    `json:"avatar_url"`
 }
 
 type WorkspaceTeamAccess struct {
@@ -103,27 +104,47 @@ func (q *Queries) DeleteTeam(ctx context.Context, id, orgID string) error {
 }
 
 type AddTeamMemberParams struct {
-	ID     string
-	TeamID string
-	UserID string
-	Role   string
+	ID         string
+	TeamID     string
+	UserID     string
+	Role       string
+	CloudIdentity string
 }
 
 func (q *Queries) AddTeamMember(ctx context.Context, arg AddTeamMemberParams) (TeamMember, error) {
 	row := q.db.QueryRow(ctx,
-		`INSERT INTO team_members (id, team_id, user_id, role) VALUES ($1, $2, $3, $4)
-		ON CONFLICT (team_id, user_id) DO UPDATE SET role = EXCLUDED.role
-		RETURNING id, team_id, user_id, role, created_at`,
-		arg.ID, arg.TeamID, arg.UserID, arg.Role,
+		`INSERT INTO team_members (id, team_id, user_id, role, cloud_identity) VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (team_id, user_id) DO UPDATE SET role = EXCLUDED.role, cloud_identity = EXCLUDED.cloud_identity
+		RETURNING id, team_id, user_id, role, cloud_identity, created_at`,
+		arg.ID, arg.TeamID, arg.UserID, arg.Role, arg.CloudIdentity,
 	)
 	var m TeamMember
-	err := row.Scan(&m.ID, &m.TeamID, &m.UserID, &m.Role, &m.CreatedAt)
+	err := row.Scan(&m.ID, &m.TeamID, &m.UserID, &m.Role, &m.CloudIdentity, &m.CreatedAt)
+	return m, err
+}
+
+type UpdateTeamMemberParams struct {
+	TeamID     string
+	UserID     string
+	Role       string
+	CloudIdentity string
+}
+
+func (q *Queries) UpdateTeamMember(ctx context.Context, arg UpdateTeamMemberParams) (TeamMember, error) {
+	row := q.db.QueryRow(ctx,
+		`UPDATE team_members SET role = $3, cloud_identity = $4
+		WHERE team_id = $1 AND user_id = $2
+		RETURNING id, team_id, user_id, role, cloud_identity, created_at`,
+		arg.TeamID, arg.UserID, arg.Role, arg.CloudIdentity,
+	)
+	var m TeamMember
+	err := row.Scan(&m.ID, &m.TeamID, &m.UserID, &m.Role, &m.CloudIdentity, &m.CreatedAt)
 	return m, err
 }
 
 func (q *Queries) ListTeamMembers(ctx context.Context, teamID string) ([]TeamMember, error) {
 	rows, err := q.db.Query(ctx,
-		`SELECT tm.id, tm.team_id, tm.user_id, tm.role, tm.created_at, u.email, u.name, u.avatar_url
+		`SELECT tm.id, tm.team_id, tm.user_id, tm.role, tm.cloud_identity, tm.created_at, u.email, u.name, u.avatar_url
 		FROM team_members tm JOIN users u ON u.id = tm.user_id
 		WHERE tm.team_id = $1 ORDER BY u.name`, teamID,
 	)
@@ -134,7 +155,7 @@ func (q *Queries) ListTeamMembers(ctx context.Context, teamID string) ([]TeamMem
 	var members []TeamMember
 	for rows.Next() {
 		var m TeamMember
-		if err := rows.Scan(&m.ID, &m.TeamID, &m.UserID, &m.Role, &m.CreatedAt, &m.Email, &m.UserName, &m.AvatarURL); err != nil {
+		if err := rows.Scan(&m.ID, &m.TeamID, &m.UserID, &m.Role, &m.CloudIdentity, &m.CreatedAt, &m.Email, &m.UserName, &m.AvatarURL); err != nil {
 			return nil, err
 		}
 		members = append(members, m)

@@ -31,8 +31,14 @@ type CreateTeamRequest struct {
 }
 
 type AddTeamMemberRequest struct {
-	UserID string `json:"user_id"`
-	Role   string `json:"role"`
+	UserID     string `json:"user_id"`
+	Role       string `json:"role"`
+	CloudIdentity string `json:"cloud_identity"`
+}
+
+type UpdateTeamMemberRequest struct {
+	Role       string `json:"role"`
+	CloudIdentity string `json:"cloud_identity"`
 }
 
 type SetWorkspaceAccessRequest struct {
@@ -186,10 +192,11 @@ func (h *TeamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	member, err := h.queries.AddTeamMember(r.Context(), repository.AddTeamMemberParams{
-		ID:     ulid.Make().String(),
-		TeamID: teamID,
-		UserID: req.UserID,
-		Role:   req.Role,
+		ID:         ulid.Make().String(),
+		TeamID:     teamID,
+		UserID:     req.UserID,
+		Role:       req.Role,
+		CloudIdentity: req.CloudIdentity,
 	})
 	if err != nil {
 		respond.ErrorWithRequest(w, r, http.StatusInternalServerError, "failed to add member")
@@ -204,6 +211,53 @@ func (h *TeamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 	})
 
 	respond.JSON(w, http.StatusCreated, member)
+}
+
+func (h *TeamHandler) UpdateMember(w http.ResponseWriter, r *http.Request) {
+	userCtx := auth.GetUser(r.Context())
+	teamID := chi.URLParam(r, "teamID")
+	userID := chi.URLParam(r, "userID")
+
+	if _, err := h.queries.GetTeam(r.Context(), teamID, userCtx.OrgID); err != nil {
+		respond.Error(w, http.StatusNotFound, "team not found")
+		return
+	}
+
+	var req UpdateTeamMemberRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.Role == "" {
+		respond.Error(w, http.StatusBadRequest, "role is required")
+		return
+	}
+
+	if !isValidRole(req.Role) {
+		respond.Error(w, http.StatusBadRequest, "role must be 'owner', 'admin', 'operator', or 'viewer'")
+		return
+	}
+
+	member, err := h.queries.UpdateTeamMember(r.Context(), repository.UpdateTeamMemberParams{
+		TeamID:     teamID,
+		UserID:     userID,
+		Role:       req.Role,
+		CloudIdentity: req.CloudIdentity,
+	})
+	if err != nil {
+		respond.ErrorWithRequest(w, r, http.StatusInternalServerError, "failed to update member")
+		return
+	}
+
+	ip, ua := auditContext(r)
+	h.auditSvc.Log(r.Context(), service.AuditEntry{
+		OrgID: userCtx.OrgID, UserID: userCtx.UserID,
+		Action: "team.update_member", EntityType: "team_member", EntityID: member.ID,
+		After: member, IPAddress: ip, UserAgent: ua,
+	})
+
+	respond.JSON(w, http.StatusOK, member)
 }
 
 func (h *TeamHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {

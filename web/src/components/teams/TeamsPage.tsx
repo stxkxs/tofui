@@ -14,7 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { formatRelativeTime } from "@/lib/utils";
-import { Plus, Users, Trash2, ChevronRight, X } from "lucide-react";
+import { Plus, Users, Trash2, ChevronRight, X, Pencil, Check } from "lucide-react";
 import { toast } from "sonner";
 
 export function TeamsPage() {
@@ -128,7 +128,7 @@ export function TeamsPage() {
       {/* Team detail dialog */}
       {selectedTeam && (
         <Dialog open={!!selectedTeam} onClose={() => setSelectedTeam(null)}>
-          <DialogContent>
+          <DialogContent className="max-w-xl">
             <DialogHeader>
               <DialogTitle>{selectedTeam.name}</DialogTitle>
             </DialogHeader>
@@ -203,6 +203,12 @@ function TeamDetail({
   const [showAddMember, setShowAddMember] = useState(false);
   const [addMemberUserId, setAddMemberUserId] = useState("");
   const [addMemberRole, setAddMemberRole] = useState("viewer");
+  const [addMemberIdentity, setAddMemberArn] = useState("");
+
+  // Edit state
+  const [editMemberId, setEditMemberId] = useState<string | null>(null);
+  const [editRole, setEditRole] = useState("");
+  const [editIdentity, setEditArn] = useState("");
 
   const { data: users } = useQuery({
     queryKey: ["users"],
@@ -218,7 +224,7 @@ function TeamDetail({
     mutationFn: async () => {
       const { data, error } = await api.POST("/teams/{teamId}/members", {
         params: { path: { teamId: team.id } },
-        body: { user_id: addMemberUserId, role: addMemberRole },
+        body: { user_id: addMemberUserId, role: addMemberRole, cloud_identity: addMemberIdentity },
       });
       if (error) throw error;
       return data;
@@ -228,9 +234,27 @@ function TeamDetail({
       setShowAddMember(false);
       setAddMemberUserId("");
       setAddMemberRole("viewer");
+      setAddMemberArn("");
       toast.success("Member added");
     },
     onError: () => toast.error("Failed to add member"),
+  });
+
+  const updateMemberMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const { data, error } = await api.PUT("/teams/{teamId}/members/{userId}", {
+        params: { path: { teamId: team.id, userId } },
+        body: { role: editRole, cloud_identity: editIdentity },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["team-members", team.id] });
+      setEditMemberId(null);
+      toast.success("Member updated");
+    },
+    onError: () => toast.error("Failed to update member"),
   });
 
   const removeMemberMutation = useMutation({
@@ -246,6 +270,12 @@ function TeamDetail({
     },
     onError: () => toast.error("Failed to remove member"),
   });
+
+  const startEdit = (m: TeamMember) => {
+    setEditMemberId(m.user_id);
+    setEditRole(m.role);
+    setEditArn(m.cloud_identity || "");
+  };
 
   return (
     <div className="space-y-4">
@@ -273,11 +303,18 @@ function TeamDetail({
                   <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
                 ))}
             </Select>
-            <Select value={addMemberRole} onChange={(e) => setAddMemberRole(e.target.value)}>
-              <option value="viewer">Viewer</option>
-              <option value="operator">Operator</option>
-              <option value="admin">Admin</option>
-            </Select>
+            <div className="grid grid-cols-[auto_1fr] gap-2">
+              <Select value={addMemberRole} onChange={(e) => setAddMemberRole(e.target.value)}>
+                <option value="viewer">Viewer</option>
+                <option value="operator">Operator</option>
+                <option value="admin">Admin</option>
+              </Select>
+              <Input
+                placeholder="Cloud identity (ARN, SA email, principal ID) (optional)"
+                value={addMemberIdentity}
+                onChange={(e) => setAddMemberArn(e.target.value)}
+              />
+            </div>
             <div className="flex justify-end gap-2">
               <Button size="sm" variant="ghost" onClick={() => setShowAddMember(false)}>Cancel</Button>
               <Button size="sm" onClick={() => addMemberMutation.mutate()} disabled={!addMemberUserId || addMemberMutation.isPending}>
@@ -292,41 +329,82 @@ function TeamDetail({
           <p className="text-sm text-muted-foreground">No members yet.</p>
         ) : (
           <div className="space-y-2">
-            {(members as TeamMember[]).map((m) => (
-              <div
-                key={m.id}
-                className="flex items-center gap-3 p-2 rounded bg-accent/30"
-              >
-                {m.avatar_url ? (
-                  <img
-                    src={m.avatar_url}
-                    alt=""
-                    className="w-6 h-6 rounded-full"
-                  />
-                ) : (
-                  <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-xs">
-                    {(m.user_name || m.email || "?")[0]}
+            {(members as TeamMember[]).map((m) =>
+              editMemberId === m.user_id ? (
+                <div key={m.id} className="p-3 rounded-lg border border-primary/20 bg-accent/20 space-y-2">
+                  <div className="flex items-center gap-2">
+                    {m.avatar_url ? (
+                      <img src={m.avatar_url} alt="" className="w-6 h-6 rounded-full" />
+                    ) : (
+                      <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-xs">
+                        {(m.user_name || m.email || "?")[0]}
+                      </div>
+                    )}
+                    <span className="text-sm font-medium">{m.user_name || m.email}</span>
                   </div>
-                )}
-                <div className="flex-1">
-                  <div className="text-sm font-medium">
-                    {m.user_name || m.email}
+                  <div className="grid grid-cols-[auto_1fr] gap-2">
+                    <Select value={editRole} onChange={(e) => setEditRole(e.target.value)}>
+                      <option value="viewer">Viewer</option>
+                      <option value="operator">Operator</option>
+                      <option value="admin">Admin</option>
+                    </Select>
+                    <Input
+                      placeholder="Cloud identity (ARN, SA email, principal ID)"
+                      value={editIdentity}
+                      onChange={(e) => setEditArn(e.target.value)}
+                    />
                   </div>
-                  <div className="text-xs text-muted-foreground">{m.email}</div>
+                  <div className="flex justify-end gap-2">
+                    <Button size="sm" variant="ghost" onClick={() => setEditMemberId(null)}>Cancel</Button>
+                    <Button size="sm" onClick={() => updateMemberMutation.mutate(m.user_id)} disabled={updateMemberMutation.isPending}>
+                      {updateMemberMutation.isPending ? <Spinner /> : <><Check className="w-3 h-3" /> Save</>}
+                    </Button>
+                  </div>
                 </div>
-                <Badge variant="outline" className="text-xs">
-                  {m.role}
-                </Badge>
-                <button
-                  onClick={() => removeMemberMutation.mutate(m.user_id)}
-                  disabled={removeMemberMutation.isPending}
-                  className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
-                  aria-label={`Remove ${m.user_name || m.email}`}
+              ) : (
+                <div
+                  key={m.id}
+                  className="flex items-center gap-3 p-2 rounded bg-accent/30"
                 >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
+                  {m.avatar_url ? (
+                    <img src={m.avatar_url} alt="" className="w-6 h-6 rounded-full" />
+                  ) : (
+                    <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-xs">
+                      {(m.user_name || m.email || "?")[0]}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium">
+                      {m.user_name || m.email}
+                    </div>
+                    <div className="text-xs text-muted-foreground">{m.email}</div>
+                    {m.cloud_identity && (
+                      <div className="text-[11px] text-muted-foreground/70 font-mono break-all mt-0.5">
+                        {m.cloud_identity}
+                      </div>
+                    )}
+                  </div>
+                  <Badge variant="outline" className="text-xs shrink-0">
+                    {m.role}
+                  </Badge>
+                  <button
+                    onClick={() => startEdit(m)}
+                    className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                    aria-label={`Edit ${m.user_name || m.email}`}
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => removeMemberMutation.mutate(m.user_id)}
+                    disabled={removeMemberMutation.isPending}
+                    className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+                    aria-label={`Remove ${m.user_name || m.email}`}
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )
+            )}
           </div>
         )}
       </div>

@@ -189,7 +189,7 @@ func (h *VariableHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	v, err := h.queries.UpdateWorkspaceVariable(r.Context(), repository.UpdateWorkspaceVariableParams{
-		ID: varID, OrgID: userCtx.OrgID, Value: value, Sensitive: req.Sensitive, Description: req.Description,
+		ID: varID, OrgID: userCtx.OrgID, Value: value, Sensitive: req.Sensitive, Description: req.Description, Category: req.Category,
 	})
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, "failed to update variable")
@@ -731,3 +731,114 @@ func (h *VariableHandler) RevealValue(w http.ResponseWriter, r *http.Request) {
 
 	respond.JSON(w, http.StatusOK, map[string]string{"value": value})
 }
+
+type EffectiveVariableResponse struct {
+	Key         string `json:"key"`
+	Value       string `json:"value"`
+	Sensitive   bool   `json:"sensitive"`
+	Category    string `json:"category"`
+	Description string `json:"description"`
+	Source      string `json:"source"` // "org", "pipeline", or "workspace"
+	SourceID    string `json:"source_id"`
+}
+
+func (h *VariableHandler) Effective(w http.ResponseWriter, r *http.Request) {
+	userCtx := auth.GetUser(r.Context())
+	workspaceID := chi.URLParam(r, "workspaceID")
+	pipelineID := r.URL.Query().Get("pipeline_id")
+
+	merged := make(map[string]EffectiveVariableResponse) // key: "key|category"
+
+	// Layer 1: org variables (lowest precedence)
+	orgVars, err := h.queries.ListOrgVariables(r.Context(), userCtx.OrgID)
+	if err == nil {
+		for _, v := range orgVars {
+			val := v.Value
+			if v.Sensitive {
+				val = "***"
+			}
+			merged[v.Key+"|"+v.Category] = EffectiveVariableResponse{
+				Key: v.Key, Value: val, Sensitive: v.Sensitive,
+				Category: v.Category, Description: v.Description,
+				Source: "org", SourceID: v.ID,
+			}
+		}
+	}
+
+	// Layer 2: pipeline variables (if pipeline_id given)
+	if pipelineID != "" {
+		pipelineVars, err := h.queries.ListPipelineVariables(r.Context(), repository.ListPipelineVariablesParams{
+			PipelineID: pipelineID, OrgID: userCtx.OrgID,
+		})
+		if err == nil {
+			for _, v := range pipelineVars {
+				val := v.Value
+				if v.Sensitive {
+					val = "***"
+				}
+				mergeEffectiveVar(merged, v.Key, val, v.Sensitive, v.Category, v.Description, "pipeline", v.ID)
+			}
+		}
+	}
+
+	// Layer 3: workspace variables (highest precedence)
+	wsVars, err := h.queries.ListWorkspaceVariables(r.Context(), repository.ListWorkspaceVariablesParams{
+		WorkspaceID: workspaceID, OrgID: userCtx.OrgID,
+	})
+	if err == nil {
+		for _, v := range wsVars {
+			val := v.Value
+			if v.Sensitive {
+				val = "***"
+			}
+			mergeEffectiveVar(merged, v.Key, val, v.Sensitive, v.Category, v.Description, "workspace", v.ID)
+		}
+	}
+
+	result := make([]EffectiveVariableResponse, 0, len(merged))
+	for _, v := range merged {
+		result = append(result, v)
+	}
+
+	respond.JSON(w, http.StatusOK, result)
+}
+
+func mergeEffectiveVar(merged map[string]EffectiveVariableResponse, key, val string, sensitive bool, category, description, source, sourceID string) {
+	mapKey := key + "|" + category
+	ev := EffectiveVariableResponse{
+		Key: key, Value: val, Sensitive: sensitive,
+		Category: category, Description: description,
+		Source: source, SourceID: sourceID,
+	}
+	if existing, ok := merged[mapKey]; ok && category == "terraform" && isEffectiveTagsKey(key) && !sensitive {
+		if m := deepMergeJSONStrings(existing.Value, val); m != "" {
+			ev.Value = m
+			ev.Description = fmt.Sprintf("Merged from %s + %s", existing.Source, source)
+		}
+	}
+	merged[mapKey] = ev
+}
+
+func isEffectiveTagsKey(key string) bool {
+	return key == "tags" || key == "default_tags" || key == "extra_tags" ||
+		strings.HasSuffix(key, "_tags")
+}
+
+func deepMergeJSONStrings(a, b string) string {
+	var mapA, mapB map[string]interface{}
+	if json.Unmarshal([]byte(a), &mapA) != nil {
+		return ""
+	}
+	if json.Unmarshal([]byte(b), &mapB) != nil {
+		return ""
+	}
+	for k, v := range mapB {
+		mapA[k] = v
+	}
+	out, err := json.Marshal(mapA)
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
