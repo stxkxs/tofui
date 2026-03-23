@@ -160,6 +160,7 @@ export interface TeamMember {
   team_id: string;
   user_id: string;
   role: string;
+  cloud_identity: string;
   created_at: string;
   email: string;
   user_name: string;
@@ -281,6 +282,133 @@ export interface DiscoveredVariable {
   configured: boolean;
 }
 
+export interface Pipeline {
+  id: string;
+  org_id: string;
+  name: string;
+  description: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PipelineStage {
+  id: string;
+  pipeline_id: string;
+  workspace_id: string;
+  stage_order: number;
+  auto_apply: boolean;
+  on_failure: "stop" | "continue";
+  created_at: string;
+  workspace_name: string;
+}
+
+export type PipelineRunStatus = "idle" | "running" | "completed" | "errored" | "cancelled";
+
+export interface PipelineRun {
+  id: string;
+  pipeline_id: string;
+  org_id: string;
+  status: PipelineRunStatus;
+  current_stage: number;
+  total_stages: number;
+  created_by: string;
+  started_at: string;
+  finished_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type PipelineStageStatus =
+  | "pending"
+  | "importing_outputs"
+  | "running"
+  | "awaiting_approval"
+  | "completed"
+  | "errored"
+  | "skipped"
+  | "cancelled";
+
+export interface PipelineRunStage {
+  id: string;
+  pipeline_run_id: string;
+  stage_id: string;
+  workspace_id: string;
+  run_id?: string | null;
+  stage_order: number;
+  status: PipelineStageStatus;
+  auto_apply: boolean;
+  on_failure: "stop" | "continue";
+  started_at?: string | null;
+  finished_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  workspace_name: string;
+}
+
+export interface CreatePipelineStageInput {
+  workspace_id: string;
+  auto_apply: boolean;
+  on_failure: "stop" | "continue";
+}
+
+export interface CreatePipelineRequest {
+  name: string;
+  description?: string;
+  stages: CreatePipelineStageInput[];
+}
+
+export interface UpdatePipelineRequest {
+  name?: string;
+  description?: string;
+  stages?: CreatePipelineStageInput[];
+}
+
+export interface PipelineDetailResponse {
+  pipeline: Pipeline;
+  stages: PipelineStage[];
+}
+
+export interface PipelineRunDetailResponse {
+  pipeline_run: PipelineRun;
+  stages: PipelineRunStage[];
+}
+
+export interface OrgVariable {
+  id: string;
+  org_id: string;
+  key: string;
+  value: string;
+  sensitive: boolean;
+  category: "terraform" | "env";
+  description: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PipelineVariable {
+  id: string;
+  pipeline_id: string;
+  org_id: string;
+  key: string;
+  value: string;
+  sensitive: boolean;
+  category: "terraform" | "env";
+  description: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EffectiveVariable {
+  key: string;
+  value: string;
+  sensitive: boolean;
+  category: "terraform" | "env";
+  description: string;
+  source: "org" | "pipeline" | "workspace";
+  source_id: string;
+}
+
 export interface ErrorResponse {
   error: string;
   message?: string;
@@ -315,6 +443,46 @@ export interface paths {
       parameters: { query?: { page?: number; per_page?: number } };
       responses: {
         200: { content: { "application/json": AuditLog[] } };
+      };
+    };
+  };
+  "/variables": {
+    get: {
+      responses: {
+        200: { content: { "application/json": OrgVariable[] } };
+      };
+    };
+    post: {
+      requestBody: {
+        content: { "application/json": CreateVariableRequest };
+      };
+      responses: {
+        201: { content: { "application/json": OrgVariable } };
+      };
+    };
+  };
+  "/variables/{variableId}": {
+    put: {
+      parameters: { path: { variableId: string } };
+      requestBody: {
+        content: { "application/json": CreateVariableRequest };
+      };
+      responses: {
+        200: { content: { "application/json": OrgVariable } };
+      };
+    };
+    delete: {
+      parameters: { path: { variableId: string } };
+      responses: {
+        204: { content: never };
+      };
+    };
+  };
+  "/variables/{variableId}/value": {
+    get: {
+      parameters: { path: { variableId: string } };
+      responses: {
+        200: { content: { "application/json": { value: string } } };
       };
     };
   };
@@ -371,7 +539,7 @@ export interface paths {
       parameters: { path: { teamId: string } };
       requestBody: {
         content: {
-          "application/json": { user_id: string; role: string };
+          "application/json": { user_id: string; role: string; cloud_identity?: string };
         };
       };
       responses: {
@@ -380,6 +548,17 @@ export interface paths {
     };
   };
   "/teams/{teamId}/members/{userId}": {
+    put: {
+      parameters: { path: { teamId: string; userId: string } };
+      requestBody: {
+        content: {
+          "application/json": { role: string; cloud_identity?: string };
+        };
+      };
+      responses: {
+        200: { content: { "application/json": TeamMember } };
+      };
+    };
     delete: {
       parameters: { path: { teamId: string; userId: string } };
       responses: {
@@ -670,6 +849,130 @@ export interface paths {
       parameters: { path: { workspaceId: string; runId: string } };
       responses: {
         200: { content: { "application/json": Run } };
+      };
+    };
+  };
+  "/pipelines": {
+    get: {
+      responses: {
+        200: { content: { "application/json": Pipeline[] } };
+      };
+    };
+    post: {
+      requestBody: {
+        content: { "application/json": CreatePipelineRequest };
+      };
+      responses: {
+        201: { content: { "application/json": Pipeline } };
+      };
+    };
+  };
+  "/pipelines/{pipelineId}": {
+    get: {
+      parameters: { path: { pipelineId: string } };
+      responses: {
+        200: { content: { "application/json": PipelineDetailResponse } };
+      };
+    };
+    put: {
+      parameters: { path: { pipelineId: string } };
+      requestBody: {
+        content: { "application/json": UpdatePipelineRequest };
+      };
+      responses: {
+        200: { content: { "application/json": Pipeline } };
+      };
+    };
+    delete: {
+      parameters: { path: { pipelineId: string } };
+      responses: {
+        204: { content: never };
+      };
+    };
+  };
+  "/pipelines/{pipelineId}/runs": {
+    get: {
+      parameters: {
+        path: { pipelineId: string };
+        query?: { page?: number; per_page?: number };
+      };
+      responses: {
+        200: { content: { "application/json": ListResponse<PipelineRun> } };
+      };
+    };
+    post: {
+      parameters: { path: { pipelineId: string } };
+      responses: {
+        201: { content: { "application/json": PipelineRun } };
+      };
+    };
+  };
+  "/pipelines/{pipelineId}/runs/{runId}": {
+    get: {
+      parameters: { path: { pipelineId: string; runId: string } };
+      responses: {
+        200: { content: { "application/json": PipelineRunDetailResponse } };
+      };
+    };
+  };
+  "/pipelines/{pipelineId}/runs/{runId}/cancel": {
+    post: {
+      parameters: { path: { pipelineId: string; runId: string } };
+      responses: {
+        200: { content: { "application/json": PipelineRun } };
+      };
+    };
+  };
+  "/pipelines/{pipelineId}/variables": {
+    get: {
+      parameters: { path: { pipelineId: string } };
+      responses: {
+        200: { content: { "application/json": PipelineVariable[] } };
+      };
+    };
+    post: {
+      parameters: { path: { pipelineId: string } };
+      requestBody: {
+        content: { "application/json": CreateVariableRequest };
+      };
+      responses: {
+        201: { content: { "application/json": PipelineVariable } };
+      };
+    };
+  };
+  "/pipelines/{pipelineId}/variables/{variableId}": {
+    put: {
+      parameters: { path: { pipelineId: string; variableId: string } };
+      requestBody: {
+        content: { "application/json": CreateVariableRequest };
+      };
+      responses: {
+        200: { content: { "application/json": PipelineVariable } };
+      };
+    };
+    delete: {
+      parameters: { path: { pipelineId: string; variableId: string } };
+      responses: {
+        204: { content: never };
+      };
+    };
+  };
+  "/pipelines/{pipelineId}/variables/{variableId}/value": {
+    get: {
+      parameters: { path: { pipelineId: string; variableId: string } };
+      responses: {
+        200: { content: { "application/json": { value: string } } };
+      };
+    };
+  };
+  "/workspaces/{workspaceId}/variables/effective": {
+    get: {
+      parameters: {
+        path: { workspaceId: string };
+        query?: { pipeline_id?: string };
+      };
+      responses: {
+        200: { content: { "application/json": EffectiveVariable[] } };
       };
     };
   };

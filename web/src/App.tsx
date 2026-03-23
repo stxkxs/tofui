@@ -9,6 +9,10 @@ import { AuthCallbackPage } from "@/routes/AuthCallback";
 import { TeamsPage } from "@/components/teams/TeamsPage";
 import { UsersPage } from "@/components/users/UsersPage";
 import { AuditLogPage } from "@/components/audit/AuditLogPage";
+import { PipelineList } from "@/components/pipeline/PipelineList";
+import { PipelineDetail } from "@/components/pipeline/PipelineDetail";
+import { PipelineRunView } from "@/components/pipeline/PipelineRunView";
+import { OrgSettings } from "@/components/settings/OrgSettings";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation, navigate } from "@/hooks/useNavigate";
 import { Spinner } from "@/components/ui/spinner";
@@ -20,6 +24,22 @@ function resolveRoute(location: string) {
 
   if (path === "/login") return { page: "login" as const };
   if (path === "/auth/callback") return { page: "callback" as const };
+
+  const pipelineRunMatch = path.match(
+    /^\/pipelines\/([^/]+)\/runs\/([^/]+)/
+  );
+  if (pipelineRunMatch)
+    return {
+      page: "pipeline-run" as const,
+      pipelineId: pipelineRunMatch[1],
+      runId: pipelineRunMatch[2],
+    };
+
+  const pipelineMatch = path.match(/^\/pipelines\/([^/]+)/);
+  if (pipelineMatch)
+    return { page: "pipeline" as const, pipelineId: pipelineMatch[1] };
+
+  if (path === "/pipelines") return { page: "pipelines" as const };
 
   const runMatch = path.match(/^\/workspaces\/([^/]+)\/runs\/([^/]+)/);
   if (runMatch)
@@ -36,6 +56,7 @@ function resolveRoute(location: string) {
   if (path === "/teams") return { page: "teams" as const };
   if (path === "/users") return { page: "users" as const };
   if (path === "/audit-logs") return { page: "audit-logs" as const };
+  if (path === "/settings") return { page: "settings" as const };
   if (path === "/") return { page: "home" as const };
   return { page: "not-found" as const };
 }
@@ -86,6 +107,16 @@ export function App() {
     <AppLayout>
       <ErrorBoundary FallbackComponent={ErrorFallback} onReset={() => window.location.reload()}>
         {route.page === "home" && <WorkspaceList />}
+        {route.page === "pipelines" && <PipelineList />}
+        {route.page === "pipeline" && (
+          <PipelineDetail pipelineId={route.pipelineId!} />
+        )}
+        {route.page === "pipeline-run" && (
+          <PipelineRunView
+            pipelineId={route.pipelineId!}
+            runId={route.runId!}
+          />
+        )}
         {route.page === "workspace" && (
           <WorkspaceDetail workspaceId={route.workspaceId!} />
         )}
@@ -98,6 +129,7 @@ export function App() {
         {route.page === "teams" && <TeamsPage />}
         {route.page === "users" && <UsersPage />}
         {route.page === "audit-logs" && <AuditLogPage />}
+        {route.page === "settings" && <OrgSettings />}
         {route.page === "not-found" && <NotFoundPage />}
       </ErrorBoundary>
     </AppLayout>

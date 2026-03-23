@@ -29,6 +29,7 @@ type Server struct {
 	http            *http.Server
 	approvalHandler *handler.ApprovalHandler
 	runSvc          *service.RunService
+	pipelineSvc     *service.PipelineService
 }
 
 func New(cfg *domain.Config, db *pgxpool.Pool, logger *slog.Logger) *Server {
@@ -52,6 +53,10 @@ func New(cfg *domain.Config, db *pgxpool.Pool, logger *slog.Logger) *Server {
 
 func (s *Server) RunService() *service.RunService {
 	return s.runSvc
+}
+
+func (s *Server) PipelineService() *service.PipelineService {
+	return s.pipelineSvc
 }
 
 func (s *Server) ApprovalHandler() *handler.ApprovalHandler {
@@ -139,6 +144,10 @@ func (s *Server) setupRouter() {
 	auditHandler := handler.NewAuditHandler(queries)
 	healthHandler := handler.NewHealthHandler(s.db, s.cfg.Environment)
 	userHandler := handler.NewUserHandler(queries, auditSvc)
+	orgVarHandler := handler.NewOrgVariableHandler(queries, encryptor, auditSvc)
+	pipelineVarHandler := handler.NewPipelineVariableHandler(queries, encryptor, auditSvc)
+	s.pipelineSvc = service.NewPipelineService(queries, s.db, s.runSvc, store)
+	pipelineHandler := handler.NewPipelineHandler(s.pipelineSvc, auditSvc)
 	webhookHandler := handler.NewWebhookHandler(queries, s.runSvc, auditSvc, s.cfg.WebhookSecret)
 
 	// API routes
@@ -181,6 +190,17 @@ func (s *Server) setupRouter() {
 				// Audit logs (admin-only)
 				r.With(auth.RequireRole("admin")).Get("/audit-logs", auditHandler.List)
 
+				// Org variables
+				r.Route("/variables", func(r chi.Router) {
+					r.Get("/", orgVarHandler.List)
+					r.With(auth.RequireRole("admin")).Post("/", orgVarHandler.Create)
+					r.Route("/{variableID}", func(r chi.Router) {
+						r.With(auth.RequireRole("admin")).Put("/", orgVarHandler.Update)
+						r.With(auth.RequireRole("admin")).Delete("/", orgVarHandler.Delete)
+						r.With(auth.RequireRole("operator")).Get("/value", orgVarHandler.RevealValue)
+					})
+				})
+
 				// Teams
 				r.Route("/teams", func(r chi.Router) {
 					r.Get("/", teamHandler.List)
@@ -190,7 +210,39 @@ func (s *Server) setupRouter() {
 						r.With(auth.RequireRole("admin")).Delete("/", teamHandler.Delete)
 						r.Get("/members", teamHandler.ListMembers)
 						r.With(auth.RequireRole("admin")).Post("/members", teamHandler.AddMember)
+						r.With(auth.RequireRole("admin")).Put("/members/{userID}", teamHandler.UpdateMember)
 						r.With(auth.RequireRole("admin")).Delete("/members/{userID}", teamHandler.RemoveMember)
+					})
+				})
+
+				// Pipelines
+				r.Route("/pipelines", func(r chi.Router) {
+					r.Get("/", pipelineHandler.List)
+					r.With(auth.RequireRole("operator")).Post("/", pipelineHandler.Create)
+					r.Route("/{pipelineID}", func(r chi.Router) {
+						r.Get("/", pipelineHandler.Get)
+						r.With(auth.RequireRole("operator")).Put("/", pipelineHandler.Update)
+						r.With(auth.RequireRole("admin")).Delete("/", pipelineHandler.Delete)
+
+						r.Route("/runs", func(r chi.Router) {
+							r.Get("/", pipelineHandler.ListRuns)
+							r.With(auth.RequireRole("operator")).Post("/", pipelineHandler.StartRun)
+							r.Route("/{runId}", func(r chi.Router) {
+								r.Get("/", pipelineHandler.GetRun)
+								r.With(auth.RequireRole("operator")).Post("/cancel", pipelineHandler.CancelRun)
+							})
+						})
+
+						// Pipeline variables
+						r.Route("/variables", func(r chi.Router) {
+							r.Get("/", pipelineVarHandler.List)
+							r.With(auth.RequireRole("operator")).Post("/", pipelineVarHandler.Create)
+							r.Route("/{variableID}", func(r chi.Router) {
+								r.With(auth.RequireRole("operator")).Put("/", pipelineVarHandler.Update)
+								r.With(auth.RequireRole("operator")).Delete("/", pipelineVarHandler.Delete)
+								r.With(auth.RequireRole("operator")).Get("/value", pipelineVarHandler.RevealValue)
+							})
+						})
 					})
 				})
 
@@ -209,6 +261,7 @@ func (s *Server) setupRouter() {
 						// Variables
 						r.Route("/variables", func(r chi.Router) {
 							r.Get("/", variableHandler.List)
+							r.Get("/effective", variableHandler.Effective)
 							r.Post("/", variableHandler.Create)
 							r.Post("/discover", variableHandler.Discover)
 							r.Post("/bulk", variableHandler.BulkCreate)

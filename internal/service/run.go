@@ -31,12 +31,13 @@ func (s *RunService) SetRiverClient(client *river.Client[pgx.Tx]) {
 }
 
 type CreateRunParams struct {
-	WorkspaceID string
-	OrgID       string
-	Operation   string
-	CreatedBy   string
-	CommitSHA   string
-	Imports     []worker.ImportResource
+	WorkspaceID       string
+	OrgID             string
+	Operation         string
+	CreatedBy         string
+	CommitSHA         string
+	Imports           []worker.ImportResource
+	AutoApplyOverride *bool
 }
 
 func (s *RunService) List(ctx context.Context, workspaceID, orgID string, page, perPage int) ([]any, int64, error) {
@@ -104,11 +105,12 @@ func (s *RunService) Create(ctx context.Context, params CreateRunParams) (reposi
 			defer tx.Rollback(ctx)
 
 			_, err = s.riverClient.InsertTx(ctx, tx, worker.RunJobArgs{
-				RunID:       runID,
-				WorkspaceID: params.WorkspaceID,
-				OrgID:       params.OrgID,
-				Operation:   params.Operation,
-				Imports:     params.Imports,
+				RunID:             runID,
+				WorkspaceID:       params.WorkspaceID,
+				OrgID:             params.OrgID,
+				Operation:         params.Operation,
+				Imports:           params.Imports,
+				AutoApplyOverride: params.AutoApplyOverride,
 			}, nil)
 			if err != nil {
 				return run, fmt.Errorf("run %s created but failed to enqueue job: %w", runID, err)

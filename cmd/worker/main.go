@@ -18,6 +18,7 @@ import (
 	"github.com/stxkxs/tofui/internal/logstream"
 	"github.com/stxkxs/tofui/internal/repository"
 	"github.com/stxkxs/tofui/internal/secrets"
+	"github.com/stxkxs/tofui/internal/service"
 	"github.com/stxkxs/tofui/internal/storage"
 	"github.com/stxkxs/tofui/internal/worker"
 	"github.com/stxkxs/tofui/internal/worker/executor"
@@ -125,10 +126,26 @@ func main() {
 		logger.Info("using local executor")
 	}
 
+	// Set up RunService for pipeline stage worker
+	runSvc := service.NewRunService(queries, dbPool, streamer)
+
 	// Set up River workers
 	workers := river.NewWorkers()
 	runJobWorker := worker.NewRunJobWorker(queries, exec, streamer, store, encryptor)
 	river.AddWorker(workers, runJobWorker)
+
+	// Pipeline stage worker with function adapters to avoid import cycle
+	createRunFn := func(ctx context.Context, workspaceID, orgID, operation, createdBy string, autoApplyOverride *bool) (repository.Run, error) {
+		return runSvc.Create(ctx, service.CreateRunParams{
+			WorkspaceID:       workspaceID,
+			OrgID:             orgID,
+			Operation:         operation,
+			CreatedBy:         createdBy,
+			AutoApplyOverride: autoApplyOverride,
+		})
+	}
+	pipelineStageWorker := worker.NewPipelineStageJobWorker(queries, createRunFn, service.ImportOutputsBetweenWorkspaces, store)
+	river.AddWorker(workers, pipelineStageWorker)
 
 	// Create River client
 	riverClient, err := river.NewClient[pgx.Tx](riverpgxv5.New(dbPool), &river.Config{
@@ -142,8 +159,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Wire river client back to worker for next-run enqueueing
+	// Wire river client back to workers for enqueueing
 	runJobWorker.SetRiverClient(riverClient, dbPool)
+	pipelineStageWorker.SetRiverClient(riverClient, dbPool)
+	runSvc.SetRiverClient(riverClient)
 
 	// Health endpoint for K8s liveness probe
 	go func() {
