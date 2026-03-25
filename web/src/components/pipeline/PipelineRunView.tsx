@@ -178,7 +178,7 @@ export function PipelineRunView({
   const isRunning = pr.status === "running";
 
   return (
-    <div className="p-6 max-w-4xl animate-fade-up">
+    <div className="p-6 animate-fade-up">
       {/* Header */}
       <div className="mb-6">
         <Link

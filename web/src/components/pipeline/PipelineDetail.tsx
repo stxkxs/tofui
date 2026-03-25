@@ -96,7 +96,7 @@ export function PipelineDetail({ pipelineId }: { pipelineId: string }) {
   const { pipeline, stages } = data;
 
   return (
-    <div className="p-6 max-w-4xl animate-fade-up">
+    <div className="p-6 animate-fade-up">
       {/* Header */}
       <div className="mb-6">
         <Link

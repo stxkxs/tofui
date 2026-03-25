@@ -245,7 +245,7 @@ export function RunView({ workspaceId, runId }: Props) {
 
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <h1 className="text-xl font-bold tracking-tight">
+            <h1 className="text-lg font-semibold tracking-tight">
               {run.operation.charAt(0).toUpperCase() + run.operation.slice(1)}{" "}
               <span className="font-mono text-base text-muted-foreground">
                 {run.id.slice(0, 12)}

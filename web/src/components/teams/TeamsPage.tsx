@@ -74,8 +74,8 @@ export function TeamsPage() {
 
   if (isError) {
     return (
-      <div className="p-8 max-w-4xl">
-        <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-10 text-center">
+      <div className="p-6">
+        <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-10 text-center">
           <p className="text-sm text-destructive">Failed to load teams. Please try again.</p>
         </div>
       </div>
@@ -83,11 +83,11 @@ export function TeamsPage() {
   }
 
   return (
-    <div className="p-8 max-w-4xl">
+    <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Teams</h1>
-          <p className="text-sm text-muted-foreground mt-1">
+          <h1 className="text-lg font-semibold tracking-tight">Teams</h1>
+          <p className="text-[12px] text-muted-foreground mt-1">
             Manage team membership and workspace access.
           </p>
         </div>
@@ -142,7 +142,7 @@ export function TeamsPage() {
 
       {/* Teams list */}
       {!teams?.length ? (
-        <div className="rounded-xl border border-dashed border-border p-10 text-center">
+        <div className="rounded-lg border border-dashed border-border p-10 text-center">
           <Users className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
           <h3 className="font-medium mb-1">No teams yet</h3>
           <p className="text-sm text-muted-foreground mb-4">

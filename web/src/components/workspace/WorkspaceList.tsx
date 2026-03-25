@@ -84,11 +84,11 @@ export function WorkspaceList() {
   ];
 
   return (
-    <div className="p-8 max-w-6xl">
+    <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Workspaces</h1>
-          <p className="text-muted-foreground mt-1">
+          <h1 className="text-lg font-semibold tracking-tight">Workspaces</h1>
+          <p className="text-[12px] text-muted-foreground mt-1">
             Manage your OpenTofu workspaces
           </p>
         </div>
@@ -128,11 +128,11 @@ export function WorkspaceList() {
           <Spinner className="w-6 h-6" />
         </div>
       ) : isError ? (
-        <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-10 text-center">
+        <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-10 text-center">
           <p className="text-sm text-destructive">Failed to load workspaces. Please try again.</p>
         </div>
       ) : !data?.data?.length ? (
-        <div className="rounded-xl border border-dashed border-border p-12 text-center">
+        <div className="rounded-lg border border-dashed border-border p-12 text-center">
           <FolderGit2 className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
           <h3 className="text-lg font-medium mb-2">
             {debouncedSearch || envFilter ? "No matching workspaces" : "No workspaces yet"}
@@ -158,7 +158,7 @@ export function WorkspaceList() {
                 href={`/workspaces/${workspace.id}`}
                 role="listitem"
                 aria-label={`Workspace ${workspace.name}, ${workspace.environment}`}
-                className="group block rounded-xl border border-border bg-card p-5 transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5"
+                className="group block rounded-lg border border-border bg-card p-5 transition-all hover:border-border hover:shadow-lg hover:shadow-black/10"
               >
                 <div className="flex items-start justify-between">
                   <div className="flex-1 min-w-0">

@@ -61,7 +61,7 @@ export function TagEditor({ value, onChange }: TagEditorProps) {
           {entries.map(([k, v]) => (
             <span
               key={k}
-              className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-accent/30 px-2 py-1 text-xs font-mono"
+              className="inline-flex items-center gap-1 rounded-md border border-border bg-input px-2 py-1 text-xs font-mono"
             >
               <span className="text-primary">{k}</span>
               <span className="text-muted-foreground/50">:</span>
@@ -96,7 +96,7 @@ export function TagEditor({ value, onChange }: TagEditorProps) {
           type="button"
           onClick={addTag}
           disabled={!newKey.trim()}
-          className="p-1 rounded-md border border-border/60 hover:bg-accent/40 text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors cursor-pointer"
+          className="p-1 rounded-md border border-border hover:bg-hover text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors cursor-pointer"
         >
           <Plus className="w-3.5 h-3.5" />
         </button>

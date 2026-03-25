@@ -108,14 +108,14 @@ export function OrgSettings() {
   if (isLoading) return <div className="flex justify-center py-20"><Spinner className="w-6 h-6 text-primary" /></div>;
 
   return (
-    <div className="p-6 max-w-4xl animate-fade-up">
+    <div className="p-6 animate-fade-up">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
             <Settings className="w-4 h-4 text-primary" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold tracking-tight">Organization Variables</h1>
+            <h1 className="text-lg font-semibold tracking-tight">Settings</h1>
             <p className="text-xs text-muted-foreground mt-0.5">
               Default variables inherited by all workspaces. Workspace-level values override these.
             </p>

@@ -60,7 +60,7 @@ Pipeline is an orchestrator, not an executor. `PipelineStageJobWorker` imports o
 ### Frontend (React)
 
 - **Stack**: Vite 7, React 19, TypeScript, Tailwind CSS 4, TanStack Query, Zustand
-- **Theme**: Miami Dolphins dark water (oklch 230° navy base, aqua primary, coral accents) defined in `web/src/index.css`
+- **Theme**: Neutral dark palette (#0A0A0B base, #6E7CF1 periwinkle primary, #CF222E destructive) with Geist font, 13px base, glass effects — defined in `web/src/index.css`
 - **API client**: `web/src/api/client.ts` — openapi-fetch with typed paths from `web/src/api/types.ts`
 - **Components**: `web/src/components/` — organized by domain (workspace/, pipeline/, run/, teams/, settings/, ui/)
 - **Routing**: simple regex-based in `web/src/App.tsx` using `window.location`

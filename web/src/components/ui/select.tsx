@@ -24,7 +24,7 @@ interface SelectProps {
 }
 
 /**
- * Custom select that matches the dark water theme.
+ * Custom accessible select component.
  *
  * Accepts either:
  *   - `<option>` children (parsed automatically) — drop-in replacement for native select
@@ -164,16 +164,16 @@ export function Select({
         }}
         onKeyDown={handleKeyDown}
         className={cn(
-          "flex h-9 w-full items-center justify-between rounded-lg border border-input bg-background/50 px-3 text-sm transition-all duration-150",
-          "hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:border-primary/40",
+          "flex h-8 w-full items-center justify-between rounded-[6px] border border-input-border bg-input px-2.5 text-sm transition-all duration-150",
+          "hover:border-primary/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/30",
           "disabled:cursor-not-allowed disabled:opacity-40",
-          open && "ring-2 ring-ring/40 border-primary/40",
+          open && "ring-1 ring-ring/30",
         )}
       >
         <span
           className={cn(
             !selected || (selected.value === "" && placeholder)
-              ? "text-muted-foreground/60"
+              ? "text-dim"
               : ""
           )}
         >
@@ -191,7 +191,7 @@ export function Select({
         <div
           ref={listRef}
           role="listbox"
-          className="absolute z-50 mt-1 w-full min-w-[8rem] max-h-60 overflow-auto rounded-lg border border-border/60 bg-card/95 backdrop-blur-md shadow-xl shadow-black/30 py-1 animate-fade-up"
+          className="absolute z-50 mt-1 w-full min-w-[8rem] max-h-60 overflow-auto rounded-[6px] border border-border bg-card/80 backdrop-blur-xl shadow-xl shadow-black/30 py-1 animate-fade-in"
           style={{ animationDuration: "120ms" }}
         >
           {options.map((option, i) => {
@@ -210,10 +210,10 @@ export function Select({
                   if (!option.disabled) setHighlightIndex(i);
                 }}
                 className={cn(
-                  "px-3 py-1.5 text-sm cursor-pointer transition-colors duration-75",
+                  "px-2.5 py-1.5 text-sm cursor-pointer transition-colors duration-75",
                   option.disabled && "opacity-40 cursor-not-allowed",
-                  isHighlighted && !option.disabled && "bg-accent/50",
-                  isSelected && "text-primary border-l-2 border-primary pl-2.5",
+                  isHighlighted && !option.disabled && "bg-hover",
+                  isSelected && "text-primary border-l-2 border-primary pl-2",
                   !isSelected && "border-l-2 border-transparent",
                 )}
               >

@@ -17,7 +17,7 @@ export function Pagination({ page, perPage, total, onPageChange }: Props) {
 
   return (
     <div className="flex items-center justify-between pt-4">
-      <span className="text-sm text-muted-foreground">
+      <span className="text-[12px] text-muted-foreground">
         Showing {from}–{to} of {total}
       </span>
       <div className="flex items-center gap-2">
@@ -30,7 +30,7 @@ export function Pagination({ page, perPage, total, onPageChange }: Props) {
           <ChevronLeft className="w-4 h-4" />
           Previous
         </Button>
-        <span className="text-sm text-muted-foreground px-2">
+        <span className="text-[12px] text-muted-foreground px-2">
           {page} / {totalPages}
         </span>
         <Button

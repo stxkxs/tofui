@@ -18,7 +18,7 @@ export function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-background">
       <div className="w-full max-w-sm mx-auto px-4">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 rounded-2xl bg-primary mx-auto mb-5 flex items-center justify-center">
+          <div className="w-16 h-16 rounded-[10px] bg-primary mx-auto mb-5 flex items-center justify-center">
             <Box className="w-8 h-8 text-primary-foreground" />
           </div>
           <h1 className="text-3xl font-bold tracking-tight mb-2">tofui</h1>
@@ -27,7 +27,7 @@ export function LoginPage() {
           </p>
         </div>
 
-        <div className="rounded-xl border border-border bg-card p-6 space-y-3">
+        <div className="rounded-lg border border-border bg-card p-6 space-y-3">
           <Button
             onClick={() => { window.location.href = "/api/v1/auth/github"; }}
             className="w-full"
