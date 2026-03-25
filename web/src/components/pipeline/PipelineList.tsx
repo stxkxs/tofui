@@ -68,11 +68,11 @@ export function PipelineList() {
   }
 
   return (
-    <div className="p-6 max-w-4xl">
+    <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Pipelines</h1>
-          <p className="text-xs text-muted-foreground mt-1">
+          <h1 className="text-lg font-semibold tracking-tight">Pipelines</h1>
+          <p className="text-[12px] text-muted-foreground mt-1">
             Orchestrate sequential workspace deployments
           </p>
         </div>
@@ -84,7 +84,7 @@ export function PipelineList() {
 
       {pipelines && pipelines.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-up">
-          <div className="w-12 h-12 rounded-xl bg-primary/8 flex items-center justify-center mb-4">
+          <div className="w-12 h-12 rounded-lg bg-primary/8 flex items-center justify-center mb-4">
             <GitBranch className="w-5 h-5 text-primary/60" />
           </div>
           <h2 className="text-sm font-semibold mb-1">No pipelines yet</h2>

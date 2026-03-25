@@ -33,8 +33,8 @@ export function AuditLogPage() {
 
   if (isError) {
     return (
-      <div className="p-8 max-w-5xl">
-        <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-10 text-center">
+      <div className="p-6">
+        <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-10 text-center">
           <p className="text-sm text-destructive">Failed to load audit logs. Please try again.</p>
         </div>
       </div>
@@ -42,16 +42,16 @@ export function AuditLogPage() {
   }
 
   return (
-    <div className="p-8 max-w-5xl">
+    <div className="p-6">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight">Audit Logs</h1>
-        <p className="text-sm text-muted-foreground mt-1">
+        <h1 className="text-lg font-semibold tracking-tight">Audit Logs</h1>
+        <p className="text-[12px] text-muted-foreground mt-1">
           Activity history across the organization.
         </p>
       </div>
 
       {!logs?.length ? (
-        <div className="rounded-xl border border-dashed border-border p-10 text-center">
+        <div className="rounded-lg border border-dashed border-border p-10 text-center">
           <Shield className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
           <h3 className="font-medium mb-1">No audit logs yet</h3>
           <p className="text-sm text-muted-foreground">

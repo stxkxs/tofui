@@ -188,7 +188,7 @@ export function AccessPanel({ workspaceId }: Props) {
       )}
 
       {!(accessList as WorkspaceTeamAccess[] | undefined)?.length ? (
-        <div className="rounded-xl border border-dashed border-border p-10 text-center">
+        <div className="rounded-lg border border-dashed border-border p-10 text-center">
           <Users className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
           <h3 className="font-medium mb-1">No teams have access</h3>
           <p className="text-sm text-muted-foreground">

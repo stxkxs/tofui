@@ -82,7 +82,7 @@ export function Dialog({ open, onClose, children }: DialogProps) {
         aria-hidden="true"
         onClick={onClose}
       />
-      <div ref={contentRef} className="relative z-50 w-full max-w-lg mx-4 animate-fade-up">
+      <div ref={contentRef} className="relative z-50 w-full max-w-lg mx-4 animate-fade-in">
         {children}
       </div>
     </div>
@@ -100,7 +100,7 @@ export function DialogContent({
   return (
     <div
       className={cn(
-        "rounded-xl border border-border/60 bg-card/95 backdrop-blur-sm p-6 shadow-2xl shadow-black/40",
+        "rounded-[10px] border border-border bg-card/80 backdrop-blur-xl p-6 shadow-2xl shadow-black/40",
         className
       )}
       onClick={(e: MouseEvent) => e.stopPropagation()}

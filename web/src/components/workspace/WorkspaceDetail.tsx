@@ -231,7 +231,7 @@ export function WorkspaceDetail({ workspaceId }: Props) {
   ];
 
   return (
-    <div className="p-8 max-w-6xl">
+    <div className="p-6">
       {/* Header */}
       <div className="mb-6">
         <Link
@@ -245,7 +245,7 @@ export function WorkspaceDetail({ workspaceId }: Props) {
         <div className="flex items-start justify-between">
           <div>
             <div className="flex items-center gap-3 mb-2">
-              <h1 className="text-2xl font-bold tracking-tight">
+              <h1 className="text-lg font-semibold tracking-tight">
                 {workspace.name}
               </h1>
               <Badge
@@ -492,11 +492,11 @@ export function WorkspaceDetail({ workspaceId }: Props) {
               <Spinner className="w-5 h-5" />
             </div>
           ) : runsError ? (
-            <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-10 text-center">
+            <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-10 text-center">
               <p className="text-sm text-destructive">Failed to load runs. Please try again.</p>
             </div>
           ) : !runsData?.data?.length ? (
-            <div className="rounded-xl border border-dashed border-border p-10 text-center">
+            <div className="rounded-lg border border-dashed border-border p-10 text-center">
               <Play className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
               <h3 className="font-medium mb-1">No runs yet</h3>
               <p className="text-sm text-muted-foreground mb-4">
@@ -585,7 +585,7 @@ export function WorkspaceDetail({ workspaceId }: Props) {
       {/* Clone dialog */}
       {showCloneDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-card border border-border rounded-xl shadow-lg w-full max-w-md p-6">
+          <div className="bg-card border border-border rounded-lg shadow-lg w-full max-w-md p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold">Clone Workspace</h2>
               <button
